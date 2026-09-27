@@ -70,6 +70,9 @@ Invoke-Step "Uploader til GitHub Releases" {
         --publish --releaseName "Sorby Gaming $Version" --tag "v$Version"
 }
 
+# Rydder op på GitHub: kun de 2 nyeste udgivelser beholdes.
+& (Join-Path $PSScriptRoot "cleanup-releases.ps1") -Keep 2
+
 Write-Host ""
 Write-Host "Version $Version er udgivet." -ForegroundColor Green
 Write-Host "Installationsfil til nye PC'er: $releaseDir\SorbyGamingClient-win-Setup.exe"
