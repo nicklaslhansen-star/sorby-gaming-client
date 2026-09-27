@@ -46,6 +46,7 @@ namespace SorbyGamingClient
         private System.Windows.Forms.Timer? connectionTimer;
         private System.Windows.Forms.Timer? startupTimer;
         private System.Windows.Forms.Timer? updateTimer;
+        private System.Windows.Forms.Timer? coverWatchdog;
         private readonly UpdateService updateService = new UpdateService();
         private readonly bool resumeAfterUpdate;
         private int remainingSeconds;
@@ -615,23 +616,71 @@ namespace SorbyGamingClient
         {
             base.OnShown(e);
 
-            if (!string.IsNullOrEmpty(PcId))
-            {
-                FormBorderStyle = FormBorderStyle.None;
-                WindowState = FormWindowState.Normal;
-                Bounds = Screen.PrimaryScreen!.Bounds;
-                WindowState = FormWindowState.Maximized;
-                TopMost = true;
-                BringToFront();
-                Activate();
-            }
-
             if (resumeAfterUpdate)
             {
                 BeginAwaitingConnection();
                 FinishStartup();
                 StartConnection();
             }
+
+            // Til sidst: vinduesindstillingerne ovenfor kan genskabe vinduet,
+            // så låseskærmen dækker først skærmen, når de er sat.
+            if (!string.IsNullOrEmpty(PcId))
+            {
+                CoverScreen();
+            }
+        }
+
+        // Dækker hele skærmen inkl. proceslinjen og lægger sig forrest.
+        private void CoverScreen()
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            if (!Visible)
+            {
+                Show();
+            }
+
+            FormBorderStyle = FormBorderStyle.None;
+            WindowState = FormWindowState.Normal;
+            Bounds = Screen.PrimaryScreen!.Bounds;
+            WindowState = FormWindowState.Maximized;
+            TopMost = true;
+            BringToFront();
+            Activate();
+            NativeWindowHelper.ForceForeground(Handle);
+        }
+
+        // Efter en opdatering starter Velopack programmet i baggrunden, og
+        // Windows giver det ikke altid fokus. Så længe PC'en er låst, sørger
+        // vagten for, at låseskærmen dækker skærmen og ligger forrest.
+        private void StartCoverWatchdog()
+        {
+            coverWatchdog = new System.Windows.Forms.Timer { Interval = 2000 };
+            coverWatchdog.Tick += (sender, e) =>
+            {
+                if (!lockScreenReady || inSession || !Visible || IsDisposed)
+                {
+                    return;
+                }
+
+                // Admin-vinduer må gerne ligge forrest.
+                if (Application.OpenForms.Cast<Form>().Any(form => form != this && form.Visible))
+                {
+                    return;
+                }
+
+                bool coversScreen = Bounds.Contains(Screen.PrimaryScreen!.Bounds);
+
+                if (!coversScreen || NativeWindowHelper.GetForegroundWindow() != Handle)
+                {
+                    CoverScreen();
+                }
+            };
+            coverWatchdog.Start();
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -669,15 +718,17 @@ namespace SorbyGamingClient
             SetupHotkey();
             RefreshLockScreen();
             StartUpdateChecks();
+            StartCoverWatchdog();
         }
 
         private void SetupWindow()
         {
             Text = "Sørby Gaming";
+            // ShowInTaskbar genskaber vinduet, så det sættes før fuldskærm.
+            ShowInTaskbar = false;
             FormBorderStyle = FormBorderStyle.None;
             WindowState = FormWindowState.Maximized;
             TopMost = true;
-            ShowInTaskbar = false;
             BackColor = Color.FromArgb(20, 20, 20);
             DoubleBuffered = true;
             ResizeRedraw = true;
@@ -1163,13 +1214,7 @@ namespace SorbyGamingClient
             inSession = false;
             SendPcInfo();
 
-            Show();
-            WindowState = FormWindowState.Normal;
-            Bounds = Screen.PrimaryScreen!.Bounds;
-            WindowState = FormWindowState.Maximized;
-            TopMost = true;
-            BringToFront();
-            Activate();
+            CoverScreen();
 
             if (currentOfflineSession != null)
             {
