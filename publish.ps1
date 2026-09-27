@@ -61,7 +61,8 @@ Invoke-Step "Bygger version $Version" {
 
 Invoke-Step "Pakker med Velopack" {
     vpk pack --packId SorbyGamingClient --packVersion $Version --packDir $publishDir `
-        --mainExe SorbyGamingClient.exe --packTitle "Sorby Gaming" --outputDir $releaseDir
+        --mainExe SorbyGamingClient.exe --packTitle "Sorby Gaming" --outputDir $releaseDir `
+        --icon (Join-Path $PSScriptRoot "SorbyGamingClient\app.ico")
 }
 
 Invoke-Step "Uploader til GitHub Releases" {

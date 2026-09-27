@@ -71,6 +71,7 @@ namespace SorbyGamingClient
         public Form1(string[] args)
         {
             InitializeComponent();
+            Icon = Theme.AppIcon;
 
             Console.WriteLine($"Sørby Gaming version {updateService.CurrentVersion}");
 

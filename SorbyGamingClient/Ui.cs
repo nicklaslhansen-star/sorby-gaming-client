@@ -40,6 +40,10 @@ namespace SorbyGamingClient
         public static readonly Color Success = Color.FromArgb(117, 241, 176);
 
         private static string? iconFamily;
+        private static Icon? appIcon;
+
+        // Sørby-logoet fra exe-filen (app.ico), så vinduer og proceslinje viser det.
+        public static Icon? AppIcon => appIcon ??= Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
         public static Font Font(float size, bool bold = false) =>
             new Font(bold ? "Segoe UI Semibold" : "Segoe UI", size, FontStyle.Regular, GraphicsUnit.Point);
@@ -157,6 +161,7 @@ namespace SorbyGamingClient
         public SorbyForm()
         {
             FormBorderStyle = FormBorderStyle.None;
+            Icon = Theme.AppIcon;
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Theme.Background;
             ForeColor = Theme.Text;
