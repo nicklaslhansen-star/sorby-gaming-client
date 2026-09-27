@@ -19,8 +19,16 @@ $project = Join-Path $PSScriptRoot "SorbyGamingClient\SorbyGamingClient.csproj"
 $publishDir = Join-Path $PSScriptRoot "publish"
 $releaseDir = Join-Path $PSScriptRoot "Releases"
 
+# Tokenet hentes fra den krypterede lagring (tools\Secrets.ps1), hvis det
+# ikke allerede er sat i denne PowerShell.
+$secretsScript = Join-Path $PSScriptRoot "..\tools\Secrets.ps1"
+if (-not $env:GITHUB_TOKEN -and (Test-Path $secretsScript)) {
+    . $secretsScript
+    $env:GITHUB_TOKEN = Get-SorbySecret GITHUB_TOKEN
+}
+
 if (-not $env:GITHUB_TOKEN) {
-    throw "Sæt `$env:GITHUB_TOKEN først (GitHub-token med adgang til repoets releases)."
+    throw "Intet GitHub-token. Gem det én gang med: . B:\SorbyGaming\tools\Secrets.ps1; Set-SorbySecret GITHUB_TOKEN"
 }
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
