@@ -24,11 +24,11 @@ namespace SorbyGamingClient
 
         public AdminChoice Choice { get; private set; }
 
-        public AdminMenuForm(string? pcId, bool isOnline, Func<string, Task<string?>> verifyCode)
+        public AdminMenuForm(string? pcId, bool isOnline, string version, Func<string, Task<string?>> verifyCode)
         {
             this.verifyCode = verifyCode;
             Title = "Admin";
-            Subtitle = $"PC {pcId ?? "?"} · {(isOnline ? "Forbundet til serveren" : "Offline")}";
+            Subtitle = $"PC {pcId ?? "?"} · {(isOnline ? "Forbundet til serveren" : "Offline")} · {UpdateService.DisplayVersion(version)}";
             Width = S(480);
 
             int left = Padding24;

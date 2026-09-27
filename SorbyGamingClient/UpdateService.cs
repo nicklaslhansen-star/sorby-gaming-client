@@ -42,6 +42,10 @@ namespace SorbyGamingClient
 
         public string CurrentVersion => manager?.CurrentVersion?.ToString() ?? "udvikling";
 
+        // "v1.2.1", eller "udvikling" når programmet ikke er installeret.
+        public static string DisplayVersion(string version) =>
+            char.IsDigit(version.FirstOrDefault()) ? $"v{version}" : version;
+
         public async Task CheckAndDownloadAsync()
         {
             if (manager == null || checking || pendingUpdate != null)

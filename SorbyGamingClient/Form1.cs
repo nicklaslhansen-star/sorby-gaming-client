@@ -594,7 +594,14 @@ namespace SorbyGamingClient
         {
             base.OnPaint(e);
 
-            if (!showQr || qrData == null || inSession)
+            if (!lockScreenReady || inSession)
+            {
+                return;
+            }
+
+            DrawVersionLabel(e.Graphics);
+
+            if (!showQr || qrData == null)
             {
                 return;
             }
@@ -607,6 +614,32 @@ namespace SorbyGamingClient
 
             QrRenderer.DrawCard(e.Graphics, qrData,
                 QrRenderer.Place(area, ClientRectangle, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)));
+        }
+
+        // Diskret versionsnummer nederst til højre på låseskærmen.
+        private void DrawVersionLabel(Graphics graphics)
+        {
+            string text = $"Sørby Gaming {UpdateService.DisplayVersion(updateService.CurrentVersion)} · PC {PcId}";
+
+            using Font font = Theme.Font(9);
+            Size size = TextRenderer.MeasureText(graphics, text, font, Size.Empty, TextFormatFlags.NoPadding);
+            int padding = LogicalToDeviceUnits(10);
+            int margin = LogicalToDeviceUnits(14);
+            Rectangle pill = new Rectangle(
+                ClientSize.Width - size.Width - padding * 2 - margin,
+                ClientSize.Height - size.Height - padding - margin,
+                size.Width + padding * 2,
+                size.Height + padding);
+
+            Theme.Smooth(graphics);
+            using (System.Drawing.Drawing2D.GraphicsPath path = Theme.Round(pill, pill.Height / 2f))
+            using (SolidBrush background = new SolidBrush(Color.FromArgb(120, 0, 0, 0)))
+            {
+                graphics.FillPath(background, path);
+            }
+
+            TextRenderer.DrawText(graphics, text, font, pill, Color.FromArgb(200, 220, 228, 240),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
@@ -935,7 +968,7 @@ namespace SorbyGamingClient
         {
             AdminChoice choice;
 
-            using (AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId)))
+            using (AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, updateService.CurrentVersion, code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId)))
             {
                 menu.ShowDialog(this);
                 choice = menu.Choice;
