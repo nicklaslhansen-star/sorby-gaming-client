@@ -51,8 +51,16 @@ namespace SorbyGamingClient
         private Button? startButton;
 
         private bool lockScreenReady;
-        private PictureBox? qrPictureBox;
+        private bool showQr;
+        private QRCodeData? qrData;
         private OfflineSurveyPanel? surveyPanel;
+        private SessionTimerOverlay? timerOverlay;
+
+        // Har eventet ingen baggrund, vises den manuelle baggrund bag QR-koden,
+        // og så bruges den lokale QR-placering.
+        private bool eventHasBackground;
+        private bool manualBackgroundShown;
+        private ManualSettings manualSettings = LocalStore.LoadManual();
 
         private CachedEvent? cachedEvent = LocalStore.LoadEvent();
         private OfflineSession? currentOfflineSession;
@@ -615,20 +623,14 @@ namespace SorbyGamingClient
             ShowInTaskbar = false;
             BackColor = Color.FromArgb(20, 20, 20);
             BackgroundImageLayout = ImageLayout.Zoom;
+            DoubleBuffered = true;
+            ResizeRedraw = true;
 
-            // Al tekst står på eventets baggrundsbillede,
-            // så skærmen viser kun QR-koden.
-            qrPictureBox = new PictureBox
-            {
-                SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = Color.White,
-                Size = new Size(300, 300)
-            };
-
+            // Al tekst står på eventets baggrundsbillede, så skærmen viser
+            // kun QR-koden. Den tegnes i OnPaint det sted, eventet angiver.
             surveyPanel = new OfflineSurveyPanel { Visible = false };
             surveyPanel.StartRequested += StartOfflineSession;
 
-            Controls.Add(qrPictureBox);
             Controls.Add(surveyPanel);
 
             Resize += (sender, e) => PositionOverlay();
@@ -638,15 +640,20 @@ namespace SorbyGamingClient
         // Online med QR-kode: vis QR. Ellers: vis spørgeskemaet på skærmen.
         private void RefreshLockScreen()
         {
-            if (!lockScreenReady || qrPictureBox == null || surveyPanel == null || inSession)
+            if (!lockScreenReady || surveyPanel == null || inSession)
             {
                 return;
             }
 
-            bool showQr = isOnline && QrUrl != null;
-
-            qrPictureBox.Visible = showQr;
+            showQr = isOnline && QrUrl != null;
             surveyPanel.Visible = !showQr;
+
+            if (showQr && !eventHasBackground)
+            {
+                byte[]? manualBackground = LocalStore.LoadManualBackground();
+                SetBackgroundImage(manualBackground);
+                manualBackgroundShown = manualBackground != null;
+            }
 
             if (!showQr)
             {
@@ -657,23 +664,40 @@ namespace SorbyGamingClient
                 );
 
                 SetBackgroundImage(LocalStore.LoadOfflineBackground());
+                manualBackgroundShown = false;
             }
 
             PositionOverlay();
+            Invalidate();
         }
 
         private void PositionOverlay()
         {
-            foreach (Control? control in new Control?[] { qrPictureBox, surveyPanel })
+            if (surveyPanel != null)
             {
-                if (control == null)
-                {
-                    continue;
-                }
-
-                control.Left = (ClientSize.Width - control.Width) / 2;
-                control.Top = (ClientSize.Height - control.Height) / 2;
+                surveyPanel.Left = (ClientSize.Width - surveyPanel.Width) / 2;
+                surveyPanel.Top = (ClientSize.Height - surveyPanel.Height) / 2;
             }
+        }
+
+        // QR-koden placeres i forhold til selve billedet (ikke skærmen), så den
+        // står samme sted på baggrunden uanset skærmens format.
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+
+            if (!showQr || qrData == null || inSession)
+            {
+                return;
+            }
+
+            Rectangle area = BackgroundImage == null
+                ? ClientRectangle
+                : QrRenderer.ZoomRect(ClientSize, BackgroundImage.Size);
+
+            QrLayout? layout = manualBackgroundShown ? manualSettings.QrLayout : cachedEvent?.QrLayout;
+
+            QrRenderer.DrawCard(e.Graphics, qrData, QrRenderer.Place(area, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)));
         }
 
         // ---------------------------------------------------------
@@ -684,15 +708,20 @@ namespace SorbyGamingClient
         {
             if (string.IsNullOrWhiteSpace(backgroundImageUrl))
             {
+                eventHasBackground = false;
                 LocalStore.SaveEventBackground(null);
 
                 if (isOnline)
                 {
                     SetBackgroundImage(null);
+                    manualBackgroundShown = false;
+                    RefreshLockScreen();
                 }
 
                 return;
             }
+
+            eventHasBackground = true;
 
             try
             {
@@ -706,6 +735,8 @@ namespace SorbyGamingClient
                 if (isOnline)
                 {
                     SetBackgroundImage(imageBytes);
+                    manualBackgroundShown = false;
+                    Invalidate();
                 }
             }
             catch (Exception ex)
@@ -743,23 +774,12 @@ namespace SorbyGamingClient
         {
             QrUrl = qrUrl;
 
-            if (qrPictureBox == null)
-            {
-                return;
-            }
-
             try
             {
-                using QRCodeGenerator qrGenerator = new QRCodeGenerator();
-                using QRCodeData qrCodeData = qrGenerator.CreateQrCode(qrUrl, QRCodeGenerator.ECCLevel.Q);
-                PngByteQRCode qrCode = new PngByteQRCode(qrCodeData);
-
-                using MemoryStream stream = new MemoryStream(qrCode.GetGraphic(20));
-                using Image tempImage = Image.FromStream(stream);
-
-                Image? oldImage = qrPictureBox.Image;
-                qrPictureBox.Image = new Bitmap(tempImage);
-                oldImage?.Dispose();
+                QRCodeData? oldData = qrData;
+                qrData = QrRenderer.Create(qrUrl);
+                oldData?.Dispose();
+                Invalidate();
 
                 Console.WriteLine($"QR-kode opdateret: {qrUrl}");
             }
@@ -866,6 +886,10 @@ namespace SorbyGamingClient
 
             Hide();
 
+            CloseTimerOverlay();
+            timerOverlay = new SessionTimerOverlay(durationSeconds);
+            timerOverlay.Show();
+
             sessionTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             sessionTimer.Tick += SessionTimer_Tick;
             sessionTimer.Start();
@@ -880,11 +904,19 @@ namespace SorbyGamingClient
         private async void SessionTimer_Tick(object? sender, EventArgs e)
         {
             remainingSeconds--;
+            timerOverlay?.SetRemaining(remainingSeconds);
 
             if (remainingSeconds <= 0)
             {
                 await EndSession();
             }
+        }
+
+        private void CloseTimerOverlay()
+        {
+            timerOverlay?.Close();
+            timerOverlay?.Dispose();
+            timerOverlay = null;
         }
 
         // ---------------------------------------------------------
@@ -902,6 +934,7 @@ namespace SorbyGamingClient
 
             Console.WriteLine("Session afsluttet.");
 
+            CloseTimerOverlay();
             inSession = false;
 
             Show();
@@ -1076,6 +1109,7 @@ namespace SorbyGamingClient
             settingsForm.ShowDialog(this);
 
             // Baggrund kan være ændret, selv om dialogen blev lukket uden at gemme.
+            manualSettings = LocalStore.LoadManual();
             RefreshLockScreen();
         }
 
@@ -1088,6 +1122,7 @@ namespace SorbyGamingClient
             sessionTimer?.Stop();
             sessionTimer?.Dispose();
             sessionTimer = null;
+            CloseTimerOverlay();
 
             connectionTimer?.Stop();
             connectionTimer?.Dispose();
@@ -1104,11 +1139,8 @@ namespace SorbyGamingClient
                 currentOfflineSession = null;
             }
 
-            if (qrPictureBox != null)
-            {
-                qrPictureBox.Image?.Dispose();
-                qrPictureBox.Image = null;
-            }
+            qrData?.Dispose();
+            qrData = null;
 
             SocketIO? oldSocket = socket;
             socket = null;

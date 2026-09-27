@@ -120,25 +120,12 @@ namespace SorbyGamingClient
 
         public static bool HasManualBackground => File.Exists(ManualBackgroundPath);
 
+        public static byte[]? LoadManualBackground() => ReadBytes(ManualBackgroundPath);
+
         // Manuelt billede vinder over eventets billede, når PC'en er offline.
         public static byte[]? LoadOfflineBackground()
         {
-            foreach (string path in new[] { ManualBackgroundPath, EventBackgroundPath })
-            {
-                try
-                {
-                    if (File.Exists(path))
-                    {
-                        return File.ReadAllBytes(path);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Kunne ikke læse {path}: {ex.Message}");
-                }
-            }
-
-            return null;
+            return ReadBytes(ManualBackgroundPath) ?? ReadBytes(EventBackgroundPath);
         }
 
         // ---------------------------------------------------------
@@ -199,6 +186,19 @@ namespace SorbyGamingClient
             }
         }
 
+        private static byte[]? ReadBytes(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? File.ReadAllBytes(path) : null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Kunne ikke læse {path}: {ex.Message}");
+                return null;
+            }
+        }
+
         private static void Write<T>(string path, T value)
         {
             WriteBytes(path, JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions));
@@ -241,6 +241,18 @@ namespace SorbyGamingClient
         public string Name { get; set; } = "";
         public int DurationSeconds { get; set; } = LocalStore.DefaultDurationSeconds;
         public List<SurveyQuestion> Questions { get; set; } = new List<SurveyQuestion>();
+
+        // Ældre servere sender ikke placeringen; så står QR-koden i midten.
+        public QrLayout? QrLayout { get; set; }
+    }
+
+    // QR-kodens placering på baggrunden: X og Y er midten og Size er bredden,
+    // alle som brøkdel (0-1) af baggrundsbilledets bredde/højde.
+    internal sealed class QrLayout
+    {
+        public double X { get; set; } = 0.5;
+        public double Y { get; set; } = 0.5;
+        public double Size { get; set; } = 0.16;
     }
 
     internal sealed class SurveyQuestion
@@ -264,6 +276,9 @@ namespace SorbyGamingClient
     {
         // null = brug eventets tid (eller standarden på 10 minutter).
         public int? DurationMinutes { get; set; }
+
+        // Placering af QR-koden på den manuelle baggrund. null = midten.
+        public QrLayout? QrLayout { get; set; }
     }
 
     internal sealed class OfflineSession

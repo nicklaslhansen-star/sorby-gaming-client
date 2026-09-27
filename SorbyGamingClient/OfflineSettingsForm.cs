@@ -5,19 +5,23 @@ using System.Windows.Forms;
 namespace SorbyGamingClient
 {
     // Manuel opsætning på selve PC'en. Bruges, når PC'en er offline og ikke
-    // har kunnet hente eventet fra serveren. Online bestemmer serveren.
+    // har kunnet hente eventet fra serveren. Online bestemmer serveren, men
+    // har eventet ingen baggrund, vises den manuelle baggrund bag QR-koden.
     internal sealed class OfflineSettingsForm : Form
     {
         private readonly CheckBox manualDurationCheckBox;
         private readonly NumericUpDown durationInput;
         private readonly Label backgroundStatusLabel;
+        private readonly Button placeQrButton;
+        private QrLayout? qrLayout;
 
         public OfflineSettingsForm(CachedEvent? cachedEvent)
         {
             ManualSettings settings = LocalStore.LoadManual();
+            qrLayout = settings.QrLayout;
 
             Text = "Sørby Gaming - Offline-indstillinger";
-            Size = new Size(520, 360);
+            Size = new Size(520, 400);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -83,6 +87,18 @@ namespace SorbyGamingClient
                 BackColor = Color.White
             };
 
+            placeQrButton = new Button
+            {
+                Text = "Placér QR-kode på baggrunden...",
+                Location = new Point(25, 195),
+                Width = 395,
+                Height = 34,
+                ForeColor = Color.Black,
+                BackColor = Color.White
+            };
+
+            placeQrButton.Click += (sender, e) => PlaceQr();
+
             chooseBackgroundButton.Click += (sender, e) => ChooseBackground();
             clearBackgroundButton.Click += (sender, e) =>
             {
@@ -93,7 +109,7 @@ namespace SorbyGamingClient
             Button saveButton = new Button
             {
                 Text = "GEM",
-                Location = new Point(150, 240),
+                Location = new Point(150, 280),
                 Width = 100,
                 Height = 38,
                 ForeColor = Color.Black,
@@ -103,7 +119,7 @@ namespace SorbyGamingClient
             Button cancelButton = new Button
             {
                 Text = "Luk",
-                Location = new Point(265, 240),
+                Location = new Point(265, 280),
                 Width = 100,
                 Height = 38,
                 ForeColor = Color.Black,
@@ -115,7 +131,8 @@ namespace SorbyGamingClient
             {
                 LocalStore.SaveManual(new ManualSettings
                 {
-                    DurationMinutes = manualDurationCheckBox.Checked ? (int)durationInput.Value : null
+                    DurationMinutes = manualDurationCheckBox.Checked ? (int)durationInput.Value : null,
+                    QrLayout = qrLayout
                 });
 
                 DialogResult = DialogResult.OK;
@@ -130,6 +147,7 @@ namespace SorbyGamingClient
                 backgroundStatusLabel,
                 chooseBackgroundButton,
                 clearBackgroundButton,
+                placeQrButton,
                 saveButton,
                 cancelButton
             });
@@ -170,11 +188,24 @@ namespace SorbyGamingClient
             UpdateBackgroundStatus();
         }
 
+        private void PlaceQr()
+        {
+            using QrPlacementForm placementForm = new QrPlacementForm(LocalStore.LoadManualBackground(), qrLayout);
+
+            if (placementForm.ShowDialog(this) == DialogResult.OK)
+            {
+                qrLayout = placementForm.Result;
+            }
+        }
+
         private void UpdateBackgroundStatus()
         {
             backgroundStatusLabel.Text = LocalStore.HasManualBackground
-                ? "Manuel baggrund: valgt (bruges når PC'en er offline)"
+                ? "Manuel baggrund: valgt (offline, og online uden eventbaggrund)"
                 : "Manuel baggrund: ingen (eventets baggrund bruges)";
+
+            // QR-koden står kun på den manuelle baggrund, når der er en.
+            placeQrButton.Enabled = LocalStore.HasManualBackground;
         }
     }
 }
