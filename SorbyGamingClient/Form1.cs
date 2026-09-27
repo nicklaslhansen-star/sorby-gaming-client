@@ -284,6 +284,7 @@ namespace SorbyGamingClient
                     ApplyServerMessage(message);
                     FinishStartup();
                     RefreshLockScreen();
+                    SendPcInfo();
 
                     if (PcId != null)
                     {
@@ -372,6 +373,66 @@ namespace SorbyGamingClient
                 return Task.CompletedTask;
             });
 
+            // -------------------------------------------------
+            // FJERNSTYRING FRA DASHBOARDET
+            // -------------------------------------------------
+
+            // Ny resttid (mere tid, eller 0 = lås nu).
+            client.On("set-remaining", response =>
+            {
+                int? seconds = null;
+
+                try
+                {
+                    JsonElement data = response.GetValue<JsonElement>(0);
+
+                    if (data.TryGetProperty("seconds", out JsonElement secondsElement) &&
+                        secondsElement.TryGetInt32(out int value))
+                    {
+                        seconds = Math.Max(0, value);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Kunne ikke læse ny resttid: {ex.Message}");
+                }
+
+                RunOnUi(client, () =>
+                {
+                    if (!inSession || seconds == null)
+                    {
+                        return;
+                    }
+
+                    Console.WriteLine($"Ny resttid fra dashboardet: {seconds} sekunder.");
+                    remainingSeconds = seconds.Value;
+                    timerOverlay?.SetRemaining(remainingSeconds);
+
+                    if (remainingSeconds <= 0)
+                    {
+                        _ = EndSession();
+                    }
+                    else
+                    {
+                        SendPcInfo();
+                    }
+                });
+
+                return Task.CompletedTask;
+            });
+
+            // Luk programmet (samme som "Stop event" i admin-menuen).
+            client.On("shutdown-client", response =>
+            {
+                RunOnUi(client, () =>
+                {
+                    Console.WriteLine("Programmet lukkes fra dashboardet.");
+                    Application.Exit();
+                });
+
+                return Task.CompletedTask;
+            });
+
             client.On("event-updated", response =>
             {
                 Console.WriteLine("Eventet er opdateret.");
@@ -385,6 +446,37 @@ namespace SorbyGamingClient
             });
 
             return client;
+        }
+
+        // Fortæller serveren version og sessionsstatus til dashboardet.
+        // Ældre servere ignorerer beskeden.
+        private void SendPcInfo()
+        {
+            SocketIO? current = socket;
+
+            if (current == null || !isOnline)
+            {
+                return;
+            }
+
+            object info = new
+            {
+                version = updateService.CurrentVersion,
+                inSession,
+                remainingSeconds = inSession ? remainingSeconds : 0
+            };
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await current.EmitAsync("pc-info", new object[] { info });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Kunne ikke sende status: {ex.Message}");
+                }
+            });
         }
 
         // Kører handlingen på UI-tråden, men kun hvis beskeden kommer fra den
@@ -855,6 +947,7 @@ namespace SorbyGamingClient
             sessionTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             sessionTimer.Tick += SessionTimer_Tick;
             sessionTimer.Start();
+            SendPcInfo();
 
             Console.WriteLine("PC er nu åben.");
         }
@@ -898,6 +991,7 @@ namespace SorbyGamingClient
 
             CloseTimerOverlay();
             inSession = false;
+            SendPcInfo();
 
             Show();
             WindowState = FormWindowState.Normal;

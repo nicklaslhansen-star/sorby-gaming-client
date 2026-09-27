@@ -29,7 +29,7 @@ namespace SorbyGamingClient
         private static readonly Color Warning = Color.FromArgb(255, 200, 87);
         private static readonly Color Danger = Color.FromArgb(255, 92, 122);
 
-        private readonly int totalSeconds;
+        private int totalSeconds;
         private readonly float scale;
         private readonly System.Windows.Forms.Timer frameTimer;
         private readonly Stopwatch clock = Stopwatch.StartNew();
@@ -102,6 +102,18 @@ namespace SorbyGamingClient
             remainingSeconds = Math.Max(0, seconds);
             remainingSetAt = clock.Elapsed.TotalSeconds;
             endsAt = DateTime.Now.AddSeconds(remainingSeconds);
+
+            // Mere tid fra dashboardet: ringen starter forfra, og timeren
+            // folder sig ud, så man kan se den nye tid.
+            if (remainingSeconds > totalSeconds)
+            {
+                totalSeconds = remainingSeconds;
+            }
+
+            if (remainingSeconds > previous + 1)
+            {
+                autoExpandUntil = remainingSetAt + 5;
+            }
 
             // Fold kort ud, når der er 5 og 1 minut tilbage.
             if ((previous > 300 && remainingSeconds <= 300 && totalSeconds > 300) ||
