@@ -244,6 +244,9 @@ namespace SorbyGamingClient
 
         // Ældre servere sender ikke placeringen; så står QR-koden i midten.
         public QrLayout? QrLayout { get; set; }
+
+        // "cover" (fyld skærmen) eller "contain" (vis hele billedet).
+        public string? BackgroundFit { get; set; }
     }
 
     // QR-kodens placering på baggrunden: X og Y er midten og Size er bredden,
@@ -279,6 +282,8 @@ namespace SorbyGamingClient
 
         // Placering af QR-koden på den manuelle baggrund. null = midten.
         public QrLayout? QrLayout { get; set; }
+
+        public string? BackgroundFit { get; set; }
     }
 
     internal sealed class OfflineSession

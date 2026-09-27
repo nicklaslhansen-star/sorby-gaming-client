@@ -45,10 +45,7 @@ namespace SorbyGamingClient
         private bool inSession;
         private static readonly HttpClient HttpClient = new HttpClient();
 
-        private Form? setupForm;
-        private TextBox? adminBox;
-        private TextBox? pcBox;
-        private Button? startButton;
+        private PcSetupForm? setupForm;
 
         private bool lockScreenReady;
         private bool showQr;
@@ -60,6 +57,12 @@ namespace SorbyGamingClient
         // og så bruges den lokale QR-placering.
         private bool eventHasBackground;
         private bool manualBackgroundShown;
+
+        // Baggrunden tegnes selv (i stedet for BackgroundImage), så den kan
+        // fylde skærmen eller vises helt med sløret kant.
+        private Image? backgroundSource;
+        private string? backgroundFit;
+        private Bitmap? composedBackground;
         private ManualSettings manualSettings = LocalStore.LoadManual();
 
         private CachedEvent? cachedEvent = LocalStore.LoadEvent();
@@ -90,79 +93,8 @@ namespace SorbyGamingClient
 
         private void ShowPcSetup()
         {
-            setupForm = new Form
-            {
-                Text = "Sørby Gaming - PC opsætning",
-                Size = new Size(450, 300),
-                StartPosition = FormStartPosition.CenterScreen,
-                FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false,
-                MinimizeBox = false,
-                TopMost = true,
-                BackColor = Color.FromArgb(30, 30, 30)
-            };
-
-            Label title = new Label
-            {
-                Text = "SØRBY GAMING",
-                ForeColor = Color.White,
-                Font = new Font("Arial", 22, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(120, 25)
-            };
-
-            Label instruction = new Label
-            {
-                Text = "Indtast admin-koden:",
-                ForeColor = Color.White,
-                Font = new Font("Arial", 12),
-                AutoSize = true,
-                Location = new Point(125, 70)
-            };
-
-            adminBox = new TextBox
-            {
-                Location = new Point(100, 100),
-                Width = 250,
-                UseSystemPasswordChar = true,
-                Font = new Font("Arial", 14)
-            };
-
-            Label pcSetupLabel = new Label
-            {
-                Text = "PC-nummer:",
-                ForeColor = Color.White,
-                Font = new Font("Arial", 12),
-                AutoSize = true,
-                Location = new Point(100, 140)
-            };
-
-            pcBox = new TextBox
-            {
-                Location = new Point(200, 137),
-                Width = 150,
-                Font = new Font("Arial", 14),
-                Text = "01"
-            };
-
-            startButton = new Button
-            {
-                Text = "START",
-                Location = new Point(145, 190),
-                Width = 160,
-                Height = 35
-            };
-
-            startButton.Click += StartButton_Click;
-
-            setupForm.Controls.Add(title);
-            setupForm.Controls.Add(instruction);
-            setupForm.Controls.Add(adminBox);
-            setupForm.Controls.Add(pcSetupLabel);
-            setupForm.Controls.Add(pcBox);
-            setupForm.Controls.Add(startButton);
-
-            setupForm.AcceptButton = startButton;
+            setupForm = new PcSetupForm(updateService.CurrentVersion, LocalStore.LoadPcId());
+            setupForm.StartRequested += SetupForm_StartRequested;
 
             DialogResult setupResult = setupForm.ShowDialog(this);
 
@@ -174,51 +106,39 @@ namespace SorbyGamingClient
             }
         }
 
-        private async void StartButton_Click(object? sender, EventArgs e)
+        private async void SetupForm_StartRequested(object? sender, EventArgs e)
         {
-            if (adminBox == null || pcBox == null || setupForm == null || startButton == null)
+            if (setupForm == null)
             {
                 return;
             }
 
-            string enteredPcId = pcBox.Text.Trim();
+            string enteredPcId = setupForm.PcNumber;
+            string code = setupForm.AdminCode;
 
-            if (string.IsNullOrWhiteSpace(enteredPcId))
+            setupForm.SetBusy("Tjekker admin-koden...");
+            string? adminError = await AdminCodeVerifier.VerifyAsync(ServerUrl, code, enteredPcId);
+
+            if (adminError != null && !TryAdoptOfflineCode(code, out string? offlineError))
             {
-                MessageBox.Show(setupForm, "Indtast et PC-nummer.", "Sørby Gaming",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            startButton.Enabled = false;
-            string? adminError = await AdminCodeVerifier.VerifyAsync(ServerUrl, adminBox.Text, enteredPcId);
-            startButton.Enabled = true;
-
-            if (adminError != null && !OfferFirstOfflineCode(adminBox.Text))
-            {
-                MessageBox.Show(setupForm, adminError, "Sørby Gaming",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-
-                adminBox.Clear();
-                adminBox.Focus();
+                setupForm.RejectAdminCode(offlineError ?? adminError);
                 return;
             }
 
             PcId = enteredPcId;
             LocalStore.SavePcId(enteredPcId);
 
-            startButton.Enabled = false;
-            adminBox.Enabled = false;
-            pcBox.Enabled = false;
-
+            setupForm.SetBusy("Forbinder til serveren...");
             StartConnection();
         }
 
         // En PC, der aldrig har været online, har ingen gemt admin-kode.
         // Så kan den indtastede kode gøres til PC'ens offline-kode. Den
         // erstattes automatisk af serverens kode ved næste online-login.
-        private bool OfferFirstOfflineCode(string code)
+        private bool TryAdoptOfflineCode(string code, out string? error)
         {
+            error = null;
+
             if (!AdminCodeVerifier.LastCheckWasOffline || AdminCodeVerifier.HasOfflineCode || setupForm == null)
             {
                 return false;
@@ -226,21 +146,19 @@ namespace SorbyGamingClient
 
             if (code.Length < 4)
             {
-                MessageBox.Show(setupForm, "Offline-koden skal være mindst 4 tegn.", "Sørby Gaming",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                error = "Offline-koden skal være mindst 4 tegn.";
                 return false;
             }
 
-            DialogResult answer = MessageBox.Show(
+            bool useCode = SorbyDialog.Confirm(
                 setupForm,
-                "Der er ingen internetforbindelse, og der er ikke gemt en admin-kode på denne PC.\n\n" +
-                "Vil du bruge den indtastede kode som admin-kode på denne PC, indtil den kommer online?",
-                "Sørby Gaming",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question
+                "Ingen internetforbindelse",
+                "Der er ikke gemt en admin-kode på denne PC. Vil du bruge den indtastede kode som admin-kode, indtil PC'en kommer online?",
+                "Brug koden",
+                "Nej"
             );
 
-            if (answer != DialogResult.Yes)
+            if (!useCode)
             {
                 return false;
             }
@@ -397,18 +315,7 @@ namespace SorbyGamingClient
                     DisposeSocket(socket);
                     socket = null;
 
-                    MessageBox.Show(setupForm,
-                        $"PC {PcId} er allerede registreret.\n\nVælg et andet PC-nummer.",
-                        "Sørby Gaming", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-
-                    if (adminBox != null) adminBox.Enabled = true;
-                    if (startButton != null) startButton.Enabled = true;
-                    if (pcBox != null)
-                    {
-                        pcBox.Enabled = true;
-                        pcBox.Focus();
-                        pcBox.SelectAll();
-                    }
+                    setupForm?.RejectPcNumber($"PC {PcId} er allerede i brug på en anden computer. Vælg et andet PC-nummer.");
                 });
 
                 return Task.CompletedTask;
@@ -622,7 +529,6 @@ namespace SorbyGamingClient
             TopMost = true;
             ShowInTaskbar = false;
             BackColor = Color.FromArgb(20, 20, 20);
-            BackgroundImageLayout = ImageLayout.Zoom;
             DoubleBuffered = true;
             ResizeRedraw = true;
 
@@ -651,7 +557,7 @@ namespace SorbyGamingClient
             if (showQr && !eventHasBackground)
             {
                 byte[]? manualBackground = LocalStore.LoadManualBackground();
-                SetBackgroundImage(manualBackground);
+                SetBackgroundImage(manualBackground, manualSettings.BackgroundFit);
                 manualBackgroundShown = manualBackground != null;
             }
 
@@ -663,7 +569,9 @@ namespace SorbyGamingClient
                     OfflineDurationSeconds() / 60
                 );
 
-                SetBackgroundImage(LocalStore.LoadOfflineBackground());
+                SetBackgroundImage(
+                    LocalStore.LoadOfflineBackground(),
+                    LocalStore.HasManualBackground ? manualSettings.BackgroundFit : cachedEvent?.BackgroundFit);
                 manualBackgroundShown = false;
             }
 
@@ -691,13 +599,31 @@ namespace SorbyGamingClient
                 return;
             }
 
-            Rectangle area = BackgroundImage == null
+            Rectangle area = backgroundSource == null
                 ? ClientRectangle
-                : QrRenderer.ZoomRect(ClientSize, BackgroundImage.Size);
+                : QrRenderer.ImageRect(ClientSize, backgroundSource.Size, backgroundFit);
 
             QrLayout? layout = manualBackgroundShown ? manualSettings.QrLayout : cachedEvent?.QrLayout;
 
-            QrRenderer.DrawCard(e.Graphics, qrData, QrRenderer.Place(area, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)));
+            QrRenderer.DrawCard(e.Graphics, qrData,
+                QrRenderer.Place(area, ClientRectangle, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)));
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            if (backgroundSource == null || ClientSize.Width <= 0 || ClientSize.Height <= 0)
+            {
+                base.OnPaintBackground(e);
+                return;
+            }
+
+            if (composedBackground == null || composedBackground.Size != ClientSize)
+            {
+                composedBackground?.Dispose();
+                composedBackground = QrRenderer.ComposeBackground(backgroundSource, ClientSize, backgroundFit);
+            }
+
+            e.Graphics.DrawImageUnscaled(composedBackground, 0, 0);
         }
 
         // ---------------------------------------------------------
@@ -713,7 +639,7 @@ namespace SorbyGamingClient
 
                 if (isOnline)
                 {
-                    SetBackgroundImage(null);
+                    SetBackgroundImage(null, null);
                     manualBackgroundShown = false;
                     RefreshLockScreen();
                 }
@@ -734,7 +660,7 @@ namespace SorbyGamingClient
 
                 if (isOnline)
                 {
-                    SetBackgroundImage(imageBytes);
+                    SetBackgroundImage(imageBytes, cachedEvent?.BackgroundFit);
                     manualBackgroundShown = false;
                     Invalidate();
                 }
@@ -745,29 +671,32 @@ namespace SorbyGamingClient
             }
         }
 
-        private void SetBackgroundImage(byte[]? imageBytes)
+        private void SetBackgroundImage(byte[]? imageBytes, string? fit)
         {
-            Image? oldImage = BackgroundImage;
+            Image? newImage = null;
 
             try
             {
-                if (imageBytes == null)
-                {
-                    BackgroundImage = null;
-                }
-                else
+                if (imageBytes != null)
                 {
                     using MemoryStream stream = new MemoryStream(imageBytes);
                     using Image temporaryImage = Image.FromStream(stream);
-                    BackgroundImage = new Bitmap(temporaryImage);
+                    newImage = new Bitmap(temporaryImage);
                 }
-
-                oldImage?.Dispose();
             }
             catch (Exception ex)
             {
+                // Fx WebP, som Windows Forms ikke kan læse. Web-panelet sender JPG.
                 Console.WriteLine($"Kunne ikke vise baggrund: {ex.Message}");
+                return;
             }
+
+            backgroundSource?.Dispose();
+            backgroundSource = newImage;
+            backgroundFit = fit;
+            composedBackground?.Dispose();
+            composedBackground = null;
+            Invalidate();
         }
 
         private void UpdateQrCode(string qrUrl)
@@ -1004,104 +933,22 @@ namespace SorbyGamingClient
 
         private void ShowAdminLogin()
         {
-            using Form loginForm = new Form
+            AdminChoice choice;
+
+            using (AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId)))
             {
-                Text = "Sørby Gaming - Admin",
-                Size = new Size(450, 260),
-                StartPosition = FormStartPosition.CenterScreen,
-                FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false,
-                MinimizeBox = false,
-                TopMost = true,
-                BackColor = Color.FromArgb(30, 30, 30)
-            };
-
-            Label title = new Label
-            {
-                Text = "ADMIN",
-                ForeColor = Color.White,
-                Font = new Font("Arial", 22, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(170, 25)
-            };
-
-            Label instruction = new Label
-            {
-                Text = "Indtast admin-koden:",
-                ForeColor = Color.White,
-                Font = new Font("Arial", 12),
-                AutoSize = true,
-                Location = new Point(125, 70)
-            };
-
-            TextBox passwordBox = new TextBox
-            {
-                Location = new Point(100, 105),
-                Width = 250,
-                UseSystemPasswordChar = true,
-                Font = new Font("Arial", 14)
-            };
-
-            Button stopButton = new Button
-            {
-                Text = "STOP EVENT",
-                Location = new Point(45, 155),
-                Width = 160,
-                Height = 35
-            };
-
-            Button settingsButton = new Button
-            {
-                Text = "OFFLINE-INDSTILLINGER",
-                Location = new Point(220, 155),
-                Width = 180,
-                Height = 35
-            };
-
-            bool openSettings = false;
-
-            async Task VerifyAndClose(bool settings)
-            {
-                stopButton.Enabled = false;
-                settingsButton.Enabled = false;
-                string? adminError = await AdminCodeVerifier.VerifyAsync(ServerUrl, passwordBox.Text, PcId);
-                stopButton.Enabled = true;
-                settingsButton.Enabled = true;
-
-                if (adminError != null)
-                {
-                    MessageBox.Show(loginForm, adminError, "Sørby Gaming",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    passwordBox.Clear();
-                    passwordBox.Focus();
-                    return;
-                }
-
-                openSettings = settings;
-                loginForm.DialogResult = DialogResult.OK;
-                loginForm.Close();
+                menu.ShowDialog(this);
+                choice = menu.Choice;
             }
 
-            stopButton.Click += async (sender, e) => await VerifyAndClose(false);
-            settingsButton.Click += async (sender, e) => await VerifyAndClose(true);
-
-            loginForm.Controls.Add(title);
-            loginForm.Controls.Add(instruction);
-            loginForm.Controls.Add(passwordBox);
-            loginForm.Controls.Add(stopButton);
-            loginForm.Controls.Add(settingsButton);
-
-            loginForm.AcceptButton = stopButton;
-            passwordBox.Focus();
-
-            if (loginForm.ShowDialog(this) != DialogResult.OK)
+            if (choice == AdminChoice.StopEvent)
             {
+                Application.Exit();
                 return;
             }
 
-            if (!openSettings)
+            if (choice != AdminChoice.Settings)
             {
-                Application.Exit();
                 return;
             }
 
@@ -1141,6 +988,10 @@ namespace SorbyGamingClient
 
             qrData?.Dispose();
             qrData = null;
+            composedBackground?.Dispose();
+            composedBackground = null;
+            backgroundSource?.Dispose();
+            backgroundSource = null;
 
             SocketIO? oldSocket = socket;
             socket = null;

@@ -8,80 +8,83 @@ namespace SorbyGamingClient
 {
     // Træk QR-koden rundt på den lokale baggrund, og brug scrollhjulet eller
     // skyderen til at ændre størrelsen. Samme format som web-panelet bruger.
-    internal sealed class QrPlacementForm : Form
+    internal sealed class QrPlacementForm : SorbyForm
     {
-        private const double MinSize = 0.05;
-        private const double MaxSize = 0.6;
+        private const double MinSize = 0.03;
+        private const double MaxSize = 0.9;
 
         private readonly PlacementCanvas canvas;
-        private readonly TrackBar sizeBar;
+        private readonly ModernSlider sizeSlider;
 
         public QrLayout Result => canvas.Placement;
 
-        public QrPlacementForm(byte[]? backgroundBytes, QrLayout? layout)
+        public QrPlacementForm(byte[]? backgroundBytes, string fit, QrLayout? layout)
         {
-            Text = "Sørby Gaming - Placér QR-kode";
-            Size = new Size(960, 700);
-            StartPosition = FormStartPosition.CenterScreen;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            TopMost = true;
-            BackColor = Color.FromArgb(30, 30, 30);
-            ForeColor = Color.White;
-            Font = new Font("Arial", 11);
+            Title = "Placér QR-kode";
+            Subtitle = "Træk QR-koden på plads. Scroll eller brug skyderen for at ændre størrelsen.";
+            Width = S(980);
 
-            Label help = new Label
+            int left = Padding24;
+            int width = Width - Padding24 * 2;
+
+            CardPanel canvasCard = new CardPanel
             {
-                Text = "Træk QR-koden derhen, hvor den skal stå. Scroll eller brug skyderen for at ændre størrelsen.",
-                AutoSize = true,
-                Location = new Point(20, 15)
+                Location = new Point(left, HeaderHeight + S(4)),
+                Size = new Size(width, S(500))
             };
 
-            canvas = new PlacementCanvas(LoadImage(backgroundBytes), layout ?? new QrLayout())
+            canvas = new PlacementCanvas(LoadImage(backgroundBytes), fit, layout ?? new QrLayout())
             {
-                Location = new Point(20, 45),
-                Size = new Size(904, 510)
+                Location = new Point(S(12), S(12)),
+                Size = new Size(width - S(24), S(476)),
+                BackColor = Theme.Surface
+            };
+            canvasCard.Controls.Add(canvas);
+
+            int rowTop = canvasCard.Bottom + S(20);
+
+            TextLabel sizeLabel = new TextLabel("Størrelse", 10, true, Theme.Muted) { Location = new Point(left, rowTop + S(12)) };
+
+            sizeSlider = new ModernSlider
+            {
+                Minimum = MinSize,
+                Maximum = MaxSize,
+                Location = new Point(left + S(84), rowTop + S(6)),
+                Size = new Size(S(300), S(32)),
+                Value = canvas.Placement.Size
             };
 
-            Label sizeLabel = new Label { Text = "Størrelse:", AutoSize = true, Location = new Point(20, 582) };
+            sizeSlider.ValueChanged += (sender, e) => canvas.SetSize(sizeSlider.Value);
+            canvas.LayoutChanged += () => sizeSlider.Value = canvas.Placement.Size;
 
-            sizeBar = new TrackBar
+            ModernButton centerButton = new ModernButton("Midt på", ButtonStyle.Secondary)
             {
-                Minimum = (int)(MinSize * 1000),
-                Maximum = (int)(MaxSize * 1000),
-                TickStyle = TickStyle.None,
-                Location = new Point(110, 575),
-                Width = 360,
-                Value = (int)Math.Round(canvas.Placement.Size * 1000)
+                Icon = "\uE7B5",
+                Location = new Point(sizeSlider.Right + S(20), rowTop),
+                Size = new Size(S(130), S(44))
             };
-
-            sizeBar.Scroll += (sender, e) => canvas.SetSize(sizeBar.Value / 1000.0);
-            canvas.LayoutChanged += () => sizeBar.Value = Math.Clamp((int)Math.Round(canvas.Placement.Size * 1000), sizeBar.Minimum, sizeBar.Maximum);
-
-            Button centerButton = MakeButton("Midt", new Point(490, 572), 90);
             centerButton.Click += (sender, e) => canvas.Center();
 
-            Button saveButton = MakeButton("GEM", new Point(710, 572), 100);
-            saveButton.DialogResult = DialogResult.OK;
+            ModernButton saveButton = new ModernButton("Gem placering")
+            {
+                Icon = "\uE74E",
+                Size = new Size(S(170), S(44)),
+                Location = new Point(Width - Padding24 - S(170), rowTop),
+                DialogResult = DialogResult.OK
+            };
 
-            Button cancelButton = MakeButton("Annuller", new Point(824, 572), 100);
-            cancelButton.DialogResult = DialogResult.Cancel;
+            ModernButton cancelButton = new ModernButton("Annuller", ButtonStyle.Secondary)
+            {
+                Size = new Size(S(120), S(44)),
+                Location = new Point(saveButton.Left - S(130), rowTop),
+                DialogResult = DialogResult.Cancel
+            };
 
-            Controls.AddRange(new Control[] { help, canvas, sizeLabel, sizeBar, centerButton, saveButton, cancelButton });
+            Controls.AddRange(new Control[] { canvasCard, sizeLabel, sizeSlider, centerButton, cancelButton, saveButton });
             AcceptButton = saveButton;
             CancelButton = cancelButton;
+            Height = rowTop + S(44) + Padding24;
         }
-
-        private static Button MakeButton(string text, Point location, int width) => new Button
-        {
-            Text = text,
-            Location = location,
-            Width = width,
-            Height = 36,
-            ForeColor = Color.Black,
-            BackColor = Color.White
-        };
 
         private static Image? LoadImage(byte[]? bytes)
         {
@@ -105,6 +108,8 @@ namespace SorbyGamingClient
         private sealed class PlacementCanvas : Control
         {
             private readonly Image? background;
+            private readonly string fit;
+            private Bitmap? composed;
             private readonly QRCodeData sample = QrRenderer.Create("https://sorby-esport-web.onrender.com/?token=forhaandsvisning");
             private PointF? dragOffset;
 
@@ -112,9 +117,10 @@ namespace SorbyGamingClient
 
             public event Action? LayoutChanged;
 
-            public PlacementCanvas(Image? background, QrLayout layout)
+            public PlacementCanvas(Image? background, string fit, QrLayout layout)
             {
                 this.background = background;
+                this.fit = fit;
                 Placement = new QrLayout { X = layout.X, Y = layout.Y, Size = layout.Size };
                 DoubleBuffered = true;
                 ResizeRedraw = true;
@@ -123,11 +129,27 @@ namespace SorbyGamingClient
                 Cursor = Cursors.Hand;
             }
 
-            private Rectangle ImageArea => background == null
-                ? QrRenderer.ZoomRect(ClientSize, new Size(16, 9))
-                : QrRenderer.ZoomRect(ClientSize, background.Size);
+            // Forhåndsvisningen har samme format som PC'ens egen skærm.
+            private Rectangle ScreenArea => QrRenderer.ImageRect(ClientSize, Screen.PrimaryScreen!.Bounds.Size, "contain");
 
-            private Rectangle QrRect => QrRenderer.Place(ImageArea, Placement, 0);
+            private Rectangle ImageArea
+            {
+                get
+                {
+                    Rectangle screen = ScreenArea;
+
+                    if (background == null)
+                    {
+                        return screen;
+                    }
+
+                    Rectangle image = QrRenderer.ImageRect(screen.Size, background.Size, fit);
+                    image.Offset(screen.Location);
+                    return image;
+                }
+            }
+
+            private Rectangle QrRect => QrRenderer.Place(ImageArea, ScreenArea, Placement, 0);
 
             public void SetSize(double size) => Apply(Placement.X, Placement.Y, size);
 
@@ -135,16 +157,17 @@ namespace SorbyGamingClient
 
             private void Apply(double x, double y, double size)
             {
+                // Placér først, så QR-koden holdes inden for skærmen, og regn
+                // derefter tilbage til brøkdele af billedet.
                 Rectangle area = ImageArea;
-                size = Math.Clamp(size, MinSize, MaxSize);
-                double halfWidth = size / 2;
-                double halfHeight = Math.Min(0.5, size * area.Width / Math.Max(1.0, area.Height) / 2);
+                QrLayout tentative = new QrLayout { X = x, Y = y, Size = Math.Clamp(size, MinSize, MaxSize) };
+                Rectangle qr = QrRenderer.Place(area, ScreenArea, tentative, 0);
 
                 Placement = new QrLayout
                 {
-                    X = Math.Round(Math.Clamp(x, halfWidth, 1 - halfWidth), 4),
-                    Y = Math.Round(Math.Clamp(y, halfHeight, 1 - halfHeight), 4),
-                    Size = Math.Round(size, 4)
+                    X = Math.Round((qr.X + qr.Width / 2.0 - area.X) / area.Width, 4),
+                    Y = Math.Round((qr.Y + qr.Height / 2.0 - area.Y) / area.Height, 4),
+                    Size = Math.Round(qr.Width / (double)area.Width, 4)
                 };
 
                 LayoutChanged?.Invoke();
@@ -154,17 +177,22 @@ namespace SorbyGamingClient
             protected override void OnPaint(PaintEventArgs e)
             {
                 base.OnPaint(e);
-                Rectangle area = ImageArea;
+                Rectangle screen = ScreenArea;
 
                 if (background != null)
                 {
-                    e.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    e.Graphics.DrawImage(background, area);
+                    if (composed == null || composed.Size != screen.Size)
+                    {
+                        composed?.Dispose();
+                        composed = QrRenderer.ComposeBackground(background, screen.Size, fit);
+                    }
+
+                    e.Graphics.DrawImageUnscaled(composed, screen.Location);
                 }
                 else
                 {
                     using SolidBrush brush = new SolidBrush(Color.FromArgb(20, 20, 20));
-                    e.Graphics.FillRectangle(brush, area);
+                    e.Graphics.FillRectangle(brush, screen);
                 }
 
                 QrRenderer.DrawCard(e.Graphics, sample, QrRect);
@@ -227,6 +255,7 @@ namespace SorbyGamingClient
                 if (disposing)
                 {
                     background?.Dispose();
+                    composed?.Dispose();
                     sample.Dispose();
                 }
 
