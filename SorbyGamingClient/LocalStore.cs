@@ -128,6 +128,32 @@ namespace SorbyGamingClient
             return ReadBytes(ManualBackgroundPath) ?? ReadBytes(EventBackgroundPath);
         }
 
+        // Sørby-standardbaggrunden (indbygget i programmet). Bruges, når
+        // hverken eventet eller PC'en har sit eget billede.
+        private static byte[]? defaultBackground;
+
+        public static byte[]? LoadDefaultBackground()
+        {
+            if (defaultBackground != null)
+            {
+                return defaultBackground;
+            }
+
+            using Stream? stream = typeof(LocalStore).Assembly.GetManifestResourceStream("default-background.jpg");
+
+            if (stream == null)
+            {
+                return null;
+            }
+
+            using MemoryStream memory = new MemoryStream();
+            stream.CopyTo(memory);
+            return defaultBackground = memory.ToArray();
+        }
+
+        // QR-koden står i det hvide felt midt på standardbaggrunden.
+        public static QrLayout DefaultBackgroundQrLayout => new QrLayout { X = 0.5, Y = 0.6047, Size = 0.195 };
+
         // ---------------------------------------------------------
         // OFFLINE-SESSIONER (kø til serveren)
         // ---------------------------------------------------------

@@ -21,6 +21,11 @@ namespace SorbyGamingClient
         private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
         private const int ConnectionCheckIntervalMs = 15000;
 
+        // Efter en opdatering venter låseskærmen op til så længe på serveren,
+        // før den skifter til offline-spørgeskemaet. Imens prøves der ofte.
+        private static readonly TimeSpan ResumeConnectGrace = TimeSpan.FromSeconds(60);
+        private const int FastConnectionCheckIntervalMs = 3000;
+
         // GitHub tillader 60 opslag i timen pr. offentlig IP, og PC'erne til
         // et event deler typisk én IP. Derfor tjekkes kun én gang i timen.
         private const int UpdateCheckIntervalMs = 60 * 60 * 1000;
@@ -34,6 +39,8 @@ namespace SorbyGamingClient
         private bool connecting;
         private DateTime lastConnectAttempt = DateTime.MinValue;
         private bool isOnline;
+        private bool awaitingConnection;
+        private System.Windows.Forms.Timer? graceTimer;
 
         private System.Windows.Forms.Timer? sessionTimer;
         private System.Windows.Forms.Timer? connectionTimer;
@@ -57,6 +64,7 @@ namespace SorbyGamingClient
         // og så bruges den lokale QR-placering.
         private bool eventHasBackground;
         private bool manualBackgroundShown;
+        private bool defaultBackgroundShown;
 
         // Baggrunden tegnes selv (i stedet for BackgroundImage), så den kan
         // fylde skærmen eller vises helt med sløret kant.
@@ -174,7 +182,7 @@ namespace SorbyGamingClient
 
         private void StartConnection()
         {
-            connectionTimer = new System.Windows.Forms.Timer { Interval = ConnectionCheckIntervalMs };
+            connectionTimer = new System.Windows.Forms.Timer { Interval = awaitingConnection ? FastConnectionCheckIntervalMs : ConnectionCheckIntervalMs };
             connectionTimer.Tick += ConnectionTimer_Tick;
             connectionTimer.Start();
 
@@ -188,6 +196,40 @@ namespace SorbyGamingClient
             startupTimer.Start();
 
             _ = TryConnectAsync();
+        }
+
+        // Låseskærmen viser "Forbinder til serveren..." i stedet for offline-
+        // spørgeskemaet, indtil PC'en er online eller ventetiden er gået.
+        private void BeginAwaitingConnection()
+        {
+            awaitingConnection = true;
+            graceTimer = new System.Windows.Forms.Timer { Interval = (int)ResumeConnectGrace.TotalMilliseconds };
+            graceTimer.Tick += (sender, e) =>
+            {
+                Console.WriteLine("Serveren svarede ikke efter opdateringen - fortsætter offline.");
+                EndAwaitingConnection();
+            };
+            graceTimer.Start();
+        }
+
+        private void EndAwaitingConnection()
+        {
+            if (!awaitingConnection)
+            {
+                return;
+            }
+
+            awaitingConnection = false;
+            graceTimer?.Stop();
+            graceTimer?.Dispose();
+            graceTimer = null;
+
+            if (connectionTimer != null)
+            {
+                connectionTimer.Interval = ConnectionCheckIntervalMs;
+            }
+
+            RefreshLockScreen();
         }
 
         private void ConnectionTimer_Tick(object? sender, EventArgs e)
@@ -204,7 +246,9 @@ namespace SorbyGamingClient
 
         private async Task TryConnectAsync()
         {
-            if (connecting || PcId == null || DateTime.Now - lastConnectAttempt < ConnectTimeout)
+            TimeSpan minimumGap = awaitingConnection ? TimeSpan.FromMilliseconds(FastConnectionCheckIntervalMs) : ConnectTimeout;
+
+            if (connecting || PcId == null || DateTime.Now - lastConnectAttempt < minimumGap)
             {
                 return;
             }
@@ -282,6 +326,14 @@ namespace SorbyGamingClient
                 RunOnUi(client, () =>
                 {
                     isOnline = true;
+                    awaitingConnection = false;
+                    graceTimer?.Stop();
+
+                    if (connectionTimer != null)
+                    {
+                        connectionTimer.Interval = ConnectionCheckIntervalMs;
+                    }
+
                     ApplyServerMessage(message);
                     FinishStartup();
                     RefreshLockScreen();
@@ -309,6 +361,10 @@ namespace SorbyGamingClient
                     if (lockScreenReady)
                     {
                         // PC'en kører videre offline og prøver igen senere.
+                        // Efter en opdatering er det typisk den gamle forbindelse,
+                        // som serveren endnu ikke har opdaget er lukket.
+                        DisposeSocket(socket);
+                        socket = null;
                         return;
                     }
 
@@ -572,6 +628,7 @@ namespace SorbyGamingClient
 
             if (resumeAfterUpdate)
             {
+                BeginAwaitingConnection();
                 FinishStartup();
                 StartConnection();
             }
@@ -645,13 +702,35 @@ namespace SorbyGamingClient
             }
 
             showQr = isOnline && QrUrl != null;
-            surveyPanel.Visible = !showQr;
+            bool waiting = awaitingConnection && !showQr;
+            surveyPanel.Visible = !showQr && !waiting;
+
+            if (waiting)
+            {
+                if (!eventHasBackground && LocalStore.LoadManualBackground() == null)
+                {
+                    ShowDefaultBackground();
+                }
+
+                PositionOverlay();
+                Invalidate();
+                return;
+            }
 
             if (showQr && !eventHasBackground)
             {
                 byte[]? manualBackground = LocalStore.LoadManualBackground();
-                SetBackgroundImage(manualBackground, manualSettings.BackgroundFit);
-                manualBackgroundShown = manualBackground != null;
+
+                if (manualBackground != null)
+                {
+                    SetBackgroundImage(manualBackground, manualSettings.BackgroundFit);
+                    manualBackgroundShown = true;
+                    defaultBackgroundShown = false;
+                }
+                else
+                {
+                    ShowDefaultBackground();
+                }
             }
 
             if (!showQr)
@@ -662,14 +741,36 @@ namespace SorbyGamingClient
                     OfflineDurationSeconds() / 60
                 );
 
-                SetBackgroundImage(
-                    LocalStore.LoadOfflineBackground(),
-                    LocalStore.HasManualBackground ? manualSettings.BackgroundFit : cachedEvent?.BackgroundFit);
+                byte[]? offlineBackground = LocalStore.LoadOfflineBackground();
+
+                if (offlineBackground != null)
+                {
+                    SetBackgroundImage(
+                        offlineBackground,
+                        LocalStore.HasManualBackground ? manualSettings.BackgroundFit : cachedEvent?.BackgroundFit);
+                    defaultBackgroundShown = false;
+                }
+                else
+                {
+                    ShowDefaultBackground();
+                }
+
                 manualBackgroundShown = false;
             }
 
             PositionOverlay();
             Invalidate();
+        }
+
+        private void ShowDefaultBackground()
+        {
+            if (!defaultBackgroundShown || backgroundSource == null)
+            {
+                SetBackgroundImage(LocalStore.LoadDefaultBackground(), "cover");
+            }
+
+            manualBackgroundShown = false;
+            defaultBackgroundShown = backgroundSource != null;
         }
 
         private void PositionOverlay()
@@ -694,6 +795,12 @@ namespace SorbyGamingClient
 
             DrawVersionLabel(e.Graphics);
 
+            if (awaitingConnection && !showQr)
+            {
+                DrawConnectingLabel(e.Graphics);
+                return;
+            }
+
             if (!showQr || qrData == null)
             {
                 return;
@@ -703,10 +810,38 @@ namespace SorbyGamingClient
                 ? ClientRectangle
                 : QrRenderer.ImageRect(ClientSize, backgroundSource.Size, backgroundFit);
 
-            QrLayout? layout = manualBackgroundShown ? manualSettings.QrLayout : cachedEvent?.QrLayout;
+            QrLayout? layout = defaultBackgroundShown
+                ? LocalStore.DefaultBackgroundQrLayout
+                : manualBackgroundShown ? manualSettings.QrLayout : cachedEvent?.QrLayout;
 
             QrRenderer.DrawCard(e.Graphics, qrData,
-                QrRenderer.Place(area, ClientRectangle, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)));
+                QrRenderer.Place(area, ClientRectangle, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)),
+                shadow: !defaultBackgroundShown);
+        }
+
+        private void DrawConnectingLabel(Graphics graphics)
+        {
+            const string text = "Forbinder til serveren...";
+
+            using Font font = Theme.Font(14, bold: true);
+            Size size = TextRenderer.MeasureText(graphics, text, font, Size.Empty, TextFormatFlags.NoPadding);
+            int padX = LogicalToDeviceUnits(24);
+            int padY = LogicalToDeviceUnits(14);
+            Rectangle pill = new Rectangle(
+                (ClientSize.Width - size.Width) / 2 - padX,
+                ClientSize.Height - size.Height - padY * 2 - LogicalToDeviceUnits(70),
+                size.Width + padX * 2,
+                size.Height + padY * 2);
+
+            Theme.Smooth(graphics);
+            using (System.Drawing.Drawing2D.GraphicsPath path = Theme.Round(pill, pill.Height / 2f))
+            using (SolidBrush background = new SolidBrush(Color.FromArgb(190, 0, 0, 0)))
+            {
+                graphics.FillPath(background, path);
+            }
+
+            TextRenderer.DrawText(graphics, text, font, pill, Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
         // Diskret versionsnummer nederst til højre på låseskærmen.
@@ -765,8 +900,6 @@ namespace SorbyGamingClient
 
                 if (isOnline)
                 {
-                    SetBackgroundImage(null, null);
-                    manualBackgroundShown = false;
                     RefreshLockScreen();
                 }
 
@@ -788,6 +921,7 @@ namespace SorbyGamingClient
                 {
                     SetBackgroundImage(imageBytes, cachedEvent?.BackgroundFit);
                     manualBackgroundShown = false;
+                    defaultBackgroundShown = false;
                     Invalidate();
                 }
             }
@@ -875,7 +1009,42 @@ namespace SorbyGamingClient
             }
 
             Console.WriteLine("Installerer opdatering og genstarter.");
-            updateService.ApplyAndRestart();
+            _ = ApplyUpdateAfterDisconnectAsync();
+        }
+
+        private async Task ApplyUpdateAfterDisconnectAsync()
+        {
+            updateTimer?.Stop();
+            connectionTimer?.Stop();
+            SocketIO? current = socket;
+            socket = null;
+
+            if (current != null)
+            {
+                try
+                {
+                    await Task.WhenAny(current.DisconnectAsync(), Task.Delay(2000));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Kunne ikke lukke forbindelsen før opdatering: {ex.Message}");
+                }
+            }
+
+            try
+            {
+                updateService.ApplyAndRestart();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Opdateringen kunne ikke installeres: {ex.Message}");
+            }
+
+            // Kommer vi hertil, blev programmet ikke genstartet: fortsæt som før.
+            isOnline = false;
+            connectionTimer?.Start();
+            updateTimer?.Start();
+            RefreshLockScreen();
         }
 
         // ---------------------------------------------------------

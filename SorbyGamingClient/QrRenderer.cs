@@ -108,7 +108,7 @@ namespace SorbyGamingClient
             return result;
         }
 
-        public static void DrawCard(Graphics graphics, QRCodeData data, Rectangle card)
+        public static void DrawCard(Graphics graphics, QRCodeData data, Rectangle card, bool shadow = true)
         {
             int count = data.ModuleMatrix.Count;
 
@@ -125,7 +125,11 @@ namespace SorbyGamingClient
             SmoothingMode oldSmoothing = graphics.SmoothingMode;
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-            DrawShadow(graphics, card, radius);
+            // Uden skygge, når kortet står i et hvidt felt på baggrunden.
+            if (shadow)
+            {
+                DrawShadow(graphics, card, radius);
+            }
 
             using (GraphicsPath cardPath = RoundedRect(card, radius))
             {
