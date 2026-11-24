@@ -16,6 +16,12 @@ static class Program
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
-        Application.Run(new Form1(args));
+        // Lukkes opsætningen uden at starte, er hovedvinduet allerede lukket.
+        Form1 mainForm = new Form1(args);
+
+        if (!mainForm.IsDisposed)
+        {
+            Application.Run(mainForm);
+        }
     }
 }

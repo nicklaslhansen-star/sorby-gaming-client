@@ -110,7 +110,7 @@ namespace SorbyGamingClient
             private readonly Image? background;
             private readonly string fit;
             private Bitmap? composed;
-            private readonly QRCodeData sample = QrRenderer.Create("https://sorby-esport-web.onrender.com/?token=forhaandsvisning");
+            private readonly QRCodeData sample = QrRenderer.Create("https://sorby.2.28.134.172.sslip.io/?token=forhaandsvisning");
             private PointF? dragOffset;
 
             public QrLayout Placement { get; private set; }

@@ -26,6 +26,29 @@ namespace SorbyGamingClient
         [DllImport("kernel32.dll")]
         private static extern uint GetCurrentThreadId();
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll")]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        public const int WM_HOTKEY = 0x0312;
+        private const uint MOD_CONTROL = 0x0002;
+        private const uint MOD_SHIFT = 0x0004;
+        private const uint MOD_NOREPEAT = 0x4000;
+
+        // Ctrl+Shift+<tast> for hele Windows, så genvejen virker, selv om
+        // låseskærmen er skjult (under en session) eller ikke har fokus.
+        public static bool RegisterGlobalHotkey(IntPtr handle, int id, System.Windows.Forms.Keys key)
+        {
+            return RegisterHotKey(handle, id, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, (uint)key);
+        }
+
+        public static void UnregisterGlobalHotkey(IntPtr handle, int id)
+        {
+            UnregisterHotKey(handle, id);
+        }
+
         public static void ForceForeground(IntPtr handle)
         {
             try

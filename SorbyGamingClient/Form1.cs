@@ -15,7 +15,7 @@ namespace SorbyGamingClient
     // sender den til serveren, når der er internet igen.
     public partial class Form1 : Form
     {
-        private const string ServerUrl = "https://sorby-esport.onrender.com";
+        private const string ServerUrl = "https://sorby-server.2.28.134.172.sslip.io";
 
         private static readonly TimeSpan OfflineStartupDelay = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
@@ -1255,18 +1255,41 @@ namespace SorbyGamingClient
         // ADMIN HOTKEY
         // ---------------------------------------------------------
 
+        private const int AdminHotkeyId = 0x5347;
+        private bool globalHotkeyRegistered;
+        private bool adminMenuOpen;
+
         private void SetupHotkey()
         {
+            // Global genvej virker også under en session, hvor låseskærmen er skjult.
+            globalHotkeyRegistered = NativeWindowHelper.RegisterGlobalHotkey(Handle, AdminHotkeyId, Keys.S);
+
+            if (!globalHotkeyRegistered)
+            {
+                Console.WriteLine("Ctrl+Shift+S kunne ikke registreres globalt. Den virker kun, når låseskærmen har fokus.");
+            }
+
             KeyPreview = true;
             KeyDown += Form1_KeyDown;
         }
 
         private void Form1_KeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.Control && e.Shift && e.KeyCode == Keys.S)
+            if (!globalHotkeyRegistered && e.Control && e.Shift && e.KeyCode == Keys.S)
             {
                 ShowAdminLogin();
             }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == NativeWindowHelper.WM_HOTKEY && (int)m.WParam == AdminHotkeyId)
+            {
+                BeginInvoke(new Action(ShowAdminLogin));
+                return;
+            }
+
+            base.WndProc(ref m);
         }
 
         // ---------------------------------------------------------
@@ -1275,12 +1298,26 @@ namespace SorbyGamingClient
 
         private void ShowAdminLogin()
         {
-            AdminChoice choice;
-
-            using (AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, updateService.CurrentVersion, code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId)))
+            // Genvejen kan trykkes igen, mens menuen allerede er åben.
+            if (adminMenuOpen || IsDisposed)
             {
+                return;
+            }
+
+            AdminChoice choice;
+            adminMenuOpen = true;
+
+            try
+            {
+                using AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, updateService.CurrentVersion, code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId));
+                // Under en session er låseskærmen skjult; så skal menuen selv tage fokus.
+                menu.Shown += (sender, e) => NativeWindowHelper.ForceForeground(menu.Handle);
                 menu.ShowDialog(this);
                 choice = menu.Choice;
+            }
+            finally
+            {
+                adminMenuOpen = false;
             }
 
             if (choice == AdminChoice.StopEvent)
@@ -1308,6 +1345,12 @@ namespace SorbyGamingClient
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            if (globalHotkeyRegistered)
+            {
+                NativeWindowHelper.UnregisterGlobalHotkey(Handle, AdminHotkeyId);
+                globalHotkeyRegistered = false;
+            }
+
             sessionTimer?.Stop();
             sessionTimer?.Dispose();
             sessionTimer = null;
