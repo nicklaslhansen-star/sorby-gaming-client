@@ -15,7 +15,7 @@ namespace SorbyGamingClient
     // sender den til serveren, når der er internet igen.
     public partial class Form1 : Form
     {
-        private const string ServerUrl = "https://sorby-server.2.28.134.172.sslip.io";
+        private const string ServerUrl = "https://sorby-server.nlh-systems.dk";
 
         private static readonly TimeSpan OfflineStartupDelay = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
