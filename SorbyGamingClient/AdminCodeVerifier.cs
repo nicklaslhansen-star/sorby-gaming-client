@@ -25,11 +25,7 @@ namespace SorbyGamingClient
 
         private static readonly HttpClient HttpClient = new HttpClient();
 
-        private static readonly string OfflineHashPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "SorbyGaming",
-            "offline-admin.json"
-        );
+        private static readonly string OfflineHashPath = Path.Combine(LocalStore.Folder, "offline-admin.json");
 
         // Sand hvis seneste kontrol ikke kunne nå serveren.
         public static bool LastCheckWasOffline { get; private set; }

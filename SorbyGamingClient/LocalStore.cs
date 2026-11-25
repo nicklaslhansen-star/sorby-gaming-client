@@ -11,10 +11,12 @@ namespace SorbyGamingClient
     // C:\ProgramData\SorbyGaming. Filerne overlever genstart af PC'en.
     internal static class LocalStore
     {
-        public static readonly string Folder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "SorbyGaming"
-        );
+        // En testversion kan få sin egen mappe med SORBY_DATA_DIR, så den
+        // ikke deler PC-nummer og event med det installerede program.
+        public static readonly string Folder =
+            Environment.GetEnvironmentVariable("SORBY_DATA_DIR") is { Length: > 0 } testFolder
+                ? testFolder
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SorbyGaming");
 
         private static readonly string EventPath = Path.Combine(Folder, "event.json");
         private static readonly string EventBackgroundPath = Path.Combine(Folder, "event-background.img");
@@ -22,6 +24,8 @@ namespace SorbyGamingClient
         private static readonly string ManualBackgroundPath = Path.Combine(Folder, "manual-background.img");
         private static readonly string SessionsPath = Path.Combine(Folder, "offline-sessions.json");
         private static readonly string PcPath = Path.Combine(Folder, "pc.json");
+        private static readonly string EventLogoPath = Path.Combine(Folder, "event-logo.img");
+        private static readonly string GamePathsPath = Path.Combine(Folder, "game-paths.json");
 
         private static readonly object SessionsLock = new object();
 
@@ -86,6 +90,7 @@ namespace SorbyGamingClient
             {
                 Delete(EventPath);
                 Delete(EventBackgroundPath);
+                Delete(EventLogoPath);
                 return;
             }
 
@@ -101,6 +106,53 @@ namespace SorbyGamingClient
             }
 
             WriteBytes(EventBackgroundPath, imageBytes);
+        }
+
+        // Logoet over QR-koden (fra eventet).
+        public static void SaveEventLogo(byte[]? imageBytes)
+        {
+            if (imageBytes == null)
+            {
+                Delete(EventLogoPath);
+                return;
+            }
+
+            WriteBytes(EventLogoPath, imageBytes);
+        }
+
+        public static byte[]? LoadEventLogo() => ReadBytes(EventLogoPath);
+
+        // ---------------------------------------------------------
+        // SPIL (stier kan rettes lokalt på den enkelte PC)
+        // ---------------------------------------------------------
+
+        // Spil-id -> lokal sti, når spillet ligger et andet sted på denne PC.
+        public static Dictionary<string, string> LoadGamePaths() =>
+            Read<Dictionary<string, string>>(GamePathsPath) ?? new Dictionary<string, string>();
+
+        public static void SaveGamePaths(Dictionary<string, string> paths) => Write(GamePathsPath, paths);
+
+        // Eventets spil med denne PC's egne stier, hvor de er rettet lokalt.
+        public static List<EventGame> ResolveGames(CachedEvent? cachedEvent)
+        {
+            if (cachedEvent?.Games == null || cachedEvent.Games.Count == 0)
+            {
+                return new List<EventGame>();
+            }
+
+            Dictionary<string, string> local = LoadGamePaths();
+
+            return cachedEvent.Games
+                .Where(game => !string.IsNullOrWhiteSpace(game.Path))
+                .Select(game => new EventGame
+                {
+                    Id = game.Id,
+                    Name = game.Name,
+                    Path = local.TryGetValue(game.Id, out string? localPath) && !string.IsNullOrWhiteSpace(localPath)
+                        ? localPath
+                        : game.Path
+                })
+                .ToList();
         }
 
         // ---------------------------------------------------------
@@ -273,6 +325,20 @@ namespace SorbyGamingClient
 
         // "cover" (fyld skærmen) eller "contain" (vis hele billedet).
         public string? BackgroundFit { get; set; }
+
+        // Nyere felter. Ældre servere sender dem ikke; så er der ingen spil,
+        // intet logo og ingen tekst.
+        public List<EventGame> Games { get; set; } = new List<EventGame>();
+        public string? QrText { get; set; }
+        public string? LogoUrl { get; set; }
+    }
+
+    // Et spil, der må spilles under eventet. Path er spillets .exe-fil.
+    internal sealed class EventGame
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Path { get; set; } = "";
     }
 
     // QR-kodens placering på baggrunden: X og Y er midten og Size er bredden,

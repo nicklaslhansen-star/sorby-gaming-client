@@ -40,6 +40,9 @@ namespace SorbyGamingClient
 
         public bool HasPendingUpdate => pendingUpdate != null;
 
+        // false, når programmet kører fra bin-mappen (testversion).
+        public bool IsInstalled => manager != null;
+
         public string CurrentVersion => manager?.CurrentVersion?.ToString() ?? "udvikling";
 
         // "v1.2.1", eller "udvikling" når programmet ikke er installeret.

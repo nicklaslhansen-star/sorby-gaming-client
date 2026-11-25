@@ -41,6 +41,7 @@ namespace SorbyGamingClient
         private double autoExpandUntil;
         private double lastFrame;
         private double lastRender = -1;
+        private double lastTopmost;
         private bool dirty = true;
 
         public SessionTimerOverlay(int durationSeconds)
@@ -134,6 +135,15 @@ namespace SorbyGamingClient
             double now = clock.Elapsed.TotalSeconds;
             float delta = (float)Math.Min(0.1, now - lastFrame);
             lastFrame = now;
+
+            // Spil, der selv lægger sig øverst, kan skjule timeren. Derfor
+            // skubbes den frem igen hvert sekund (uden at tage fokus).
+            // Spil i "eksklusiv fuldskærm" tegner dog stadig hen over alt.
+            if (now - lastTopmost >= 1)
+            {
+                lastTopmost = now;
+                SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            }
 
             bool wantExpanded = IsHovered() || now < autoExpandUntil || remainingSeconds <= 10;
             float target = wantExpanded ? 1f : 0f;
@@ -427,6 +437,15 @@ namespace SorbyGamingClient
             public byte SourceConstantAlpha;
             public byte AlphaFormat;
         }
+
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_NOOWNERZORDER = 0x0200;
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref NativePoint pptDst, ref NativeSize psize,

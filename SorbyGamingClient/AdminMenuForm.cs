@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -9,25 +10,30 @@ namespace SorbyGamingClient
     {
         None,
         Settings,
-        StopEvent
+        StopEvent,
+        EndSession,
+        Games
     }
 
-    // Admin-menuen (Ctrl+Shift+S). Koden tjekkes, når man vælger en handling.
+    // Admin-menuen (Ctrl+Shift+S, eller Ctrl+Shift+F under en session).
+    // Koden tjekkes, når man vælger en handling.
     internal sealed class AdminMenuForm : SorbyForm
     {
         private readonly Func<string, Task<string?>> verifyCode;
         private readonly ModernTextBox codeBox;
         private readonly Banner banner;
-        private readonly ActionTile settingsTile;
-        private readonly ActionTile stopTile;
+        private readonly List<ActionTile> tiles = new List<ActionTile>();
         private bool verifying;
 
         public AdminChoice Choice { get; private set; }
 
-        public AdminMenuForm(string? pcId, bool isOnline, string version, Func<string, Task<string?>> verifyCode)
+        // enterChoice: hvad Enter i kodefeltet gør. Ctrl+Shift+F åbner menuen
+        // med "Afslut session" som Enter-handling.
+        public AdminMenuForm(string? pcId, bool isOnline, string version, Func<string, Task<string?>> verifyCode,
+            bool inSession = false, bool hasGames = false, AdminChoice enterChoice = AdminChoice.Settings)
         {
             this.verifyCode = verifyCode;
-            Title = "Admin";
+            Title = enterChoice == AdminChoice.EndSession ? "Afslut session" : "Admin";
             Subtitle = $"PC {pcId ?? "?"} · {(isOnline ? "Forbundet til serveren" : "Offline")} · {UpdateService.DisplayVersion(version)}";
             Width = S(480);
 
@@ -44,11 +50,11 @@ namespace SorbyGamingClient
             };
             codeBox.KeyDown += (sender, e) =>
             {
-                // Enter åbner indstillingerne – aldrig "stop event" ved et uheld.
+                // Enter vælger aldrig "stop event" ved et uheld.
                 if (e.KeyCode == Keys.Enter)
                 {
                     e.SuppressKeyPress = true;
-                    _ = ChooseAsync(AdminChoice.Settings);
+                    _ = ChooseAsync(enterChoice == AdminChoice.EndSession && inSession ? AdminChoice.EndSession : AdminChoice.Settings);
                 }
             };
 
@@ -58,37 +64,55 @@ namespace SorbyGamingClient
                 Size = new Size(width, S(44))
             };
 
-            settingsTile = new ActionTile("", "Offline-indstillinger", "Åbningstid, lokal baggrund og QR-placering")
+            if (inSession)
             {
-                Location = new Point(left, banner.Top),
-                Size = new Size(width, S(76))
-            };
-            settingsTile.Click += async (sender, e) => await ChooseAsync(AdminChoice.Settings);
+                AddTile("", "Afslut session", "Lukker spillet og viser QR-koden igen", AdminChoice.EndSession);
+            }
 
-            stopTile = new ActionTile("", "Stop event", "Lukker Sørby Gaming på denne PC", danger: true)
+            if (hasGames)
             {
-                Location = new Point(left, settingsTile.Bottom + S(12)),
-                Size = new Size(width, S(76))
-            };
-            stopTile.Click += async (sender, e) => await ChooseAsync(AdminChoice.StopEvent);
+                AddTile("", "Spil på denne PC", "Ret stien til eventets spil på netop denne PC", AdminChoice.Games);
+            }
 
-            Controls.AddRange(new Control[] { codeLabel, codeBox, banner, settingsTile, stopTile });
+            AddTile("", "Offline-indstillinger", "Åbningstid, lokal baggrund og QR-placering", AdminChoice.Settings);
+            AddTile("", "Stop event", "Lukker Sørby Gaming på denne PC", AdminChoice.StopEvent, danger: true);
+
+            Controls.AddRange(new Control[] { codeLabel, codeBox, banner });
             LayoutTiles();
+        }
+
+        private void AddTile(string icon, string title, string description, AdminChoice choice, bool danger = false)
+        {
+            ActionTile tile = new ActionTile(icon, title, description, danger) { Size = new Size(Width - Padding24 * 2, S(76)) };
+            tile.Click += async (sender, e) => await ChooseAsync(choice);
+            tiles.Add(tile);
+            Controls.Add(tile);
         }
 
         // Fliserne rykker ned, når der vises en besked.
         private void LayoutTiles()
         {
             int top = banner.Visible ? banner.Bottom + S(14) : codeBox.Bottom + S(20);
-            settingsTile.Top = top;
-            stopTile.Top = settingsTile.Bottom + S(12);
-            Height = stopTile.Bottom + Padding24;
+
+            foreach (ActionTile tile in tiles)
+            {
+                tile.Location = new Point(Padding24, top);
+                top = tile.Bottom + S(12);
+            }
+
+            Height = top - S(12) + Padding24;
         }
 
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
             codeBox.Focus();
+        }
+
+        private void SetEnabled(bool enabled)
+        {
+            tiles.ForEach(tile => tile.Enabled = enabled);
+            codeBox.Enabled = enabled;
         }
 
         private async Task ChooseAsync(AdminChoice choice)
@@ -107,17 +131,13 @@ namespace SorbyGamingClient
             }
 
             verifying = true;
-            settingsTile.Enabled = false;
-            stopTile.Enabled = false;
-            codeBox.Enabled = false;
+            SetEnabled(false);
             ShowMessage("Tjekker koden...", BannerKind.Info);
 
             string? error = await verifyCode(codeBox.Text);
 
             verifying = false;
-            settingsTile.Enabled = true;
-            stopTile.Enabled = true;
-            codeBox.Enabled = true;
+            SetEnabled(true);
 
             if (error != null)
             {

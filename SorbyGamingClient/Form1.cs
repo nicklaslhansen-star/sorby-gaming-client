@@ -15,7 +15,12 @@ namespace SorbyGamingClient
     // sender den til serveren, når der er internet igen.
     public partial class Form1 : Form
     {
-        private const string ServerUrl = "https://sorby-server.nlh-systems.dk";
+        private const string DefaultServerUrl = "https://sorby-server.nlh-systems.dk";
+
+        // Testversioner (ikke installeret via Velopack) kan pege på en
+        // testserver med miljøvariablen SORBY_SERVER_URL. Installerede
+        // PC'er bruger altid den rigtige server.
+        private readonly string ServerUrl;
 
         private static readonly TimeSpan OfflineStartupDelay = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
@@ -60,6 +65,10 @@ namespace SorbyGamingClient
         private QRCodeData? qrData;
         private OfflineSurveyPanel? surveyPanel;
         private SessionTimerOverlay? timerOverlay;
+        private readonly GameGuard gameGuard = new GameGuard();
+
+        // Eventets logo over QR-koden.
+        private Image? logoImage;
 
         // Har eventet ingen baggrund, vises den manuelle baggrund bag QR-koden,
         // og så bruges den lokale QR-placering.
@@ -82,7 +91,13 @@ namespace SorbyGamingClient
             InitializeComponent();
             Icon = Theme.AppIcon;
 
-            Console.WriteLine($"Sørby Gaming version {updateService.CurrentVersion}");
+            string? testServer = Environment.GetEnvironmentVariable("SORBY_SERVER_URL");
+            ServerUrl = !updateService.IsInstalled && !string.IsNullOrWhiteSpace(testServer)
+                ? testServer.Trim().TrimEnd('/')
+                : DefaultServerUrl;
+
+            Console.WriteLine($"Sørby Gaming version {updateService.CurrentVersion} · server {ServerUrl}");
+            SetLogo(LocalStore.LoadEventLogo());
 
             // Efter en opdatering starter PC'en igen som samme PC-nummer.
             string? savedPcId = LocalStore.LoadPcId();
@@ -600,6 +615,7 @@ namespace SorbyGamingClient
             {
                 cachedEvent = message.Event;
                 LocalStore.SaveEvent(cachedEvent);
+                _ = UpdateLogoAsync(cachedEvent?.LogoUrl);
             }
 
             if (message.HasBackground)
@@ -865,9 +881,65 @@ namespace SorbyGamingClient
                 ? LocalStore.DefaultBackgroundQrLayout
                 : manualBackgroundShown ? manualSettings.QrLayout : cachedEvent?.QrLayout;
 
-            QrRenderer.DrawCard(e.Graphics, qrData,
-                QrRenderer.Place(area, ClientRectangle, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels)),
-                shadow: !defaultBackgroundShown);
+            Rectangle qrRect = QrRenderer.Place(area, ClientRectangle, layout, LogicalToDeviceUnits(QrRenderer.DefaultSizePixels));
+            QrRenderer.DrawCard(e.Graphics, qrData, qrRect, shadow: !defaultBackgroundShown);
+            DrawQrExtras(e.Graphics, qrRect);
+        }
+
+        // Logo over QR-koden og tekst under, i samme mål som web-panelets
+        // forhåndsvisning (brøkdele af QR-kodens bredde).
+        private void DrawQrExtras(Graphics graphics, Rectangle qrRect)
+        {
+            int qr = qrRect.Width;
+            int gap = (int)Math.Round(qr * 0.08);
+
+            if (logoImage != null && logoImage.Width > 0 && logoImage.Height > 0)
+            {
+                float scale = Math.Min(qr * 1.4f / logoImage.Width, qr * 0.55f / logoImage.Height);
+                int width = Math.Max(1, (int)Math.Round(logoImage.Width * scale));
+                int height = Math.Max(1, (int)Math.Round(logoImage.Height * scale));
+                Rectangle logoRect = new Rectangle(
+                    qrRect.X + (qr - width) / 2,
+                    Math.Max(0, qrRect.Y - gap - height),
+                    width,
+                    height);
+
+                System.Drawing.Drawing2D.InterpolationMode oldMode = graphics.InterpolationMode;
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                graphics.DrawImage(logoImage, logoRect);
+                graphics.InterpolationMode = oldMode;
+            }
+
+            string? text = cachedEvent?.QrText?.Trim();
+
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            float fontPixels = Math.Max(10f, qr * 0.11f);
+
+            using Font baseFont = Theme.Font(10, bold: true);
+            using Font font = new Font(baseFont.FontFamily, fontPixels, FontStyle.Bold, GraphicsUnit.Pixel);
+            Size textSize = TextRenderer.MeasureText(graphics, text, font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            int padX = (int)Math.Round(fontPixels * 0.9f);
+            int padY = (int)Math.Round(fontPixels * 0.32f);
+            int pillHeight = textSize.Height + padY * 2;
+            Rectangle pill = new Rectangle(
+                qrRect.X + qr / 2 - (textSize.Width + padX * 2) / 2,
+                Math.Min(ClientSize.Height - pillHeight, qrRect.Bottom + gap),
+                textSize.Width + padX * 2,
+                pillHeight);
+
+            Theme.Smooth(graphics);
+            using (System.Drawing.Drawing2D.GraphicsPath path = Theme.Round(pill, pill.Height / 2f))
+            using (SolidBrush background = new SolidBrush(Color.FromArgb(158, 0, 0, 0)))
+            {
+                graphics.FillPath(background, path);
+            }
+
+            TextRenderer.DrawText(graphics, text, font, pill, Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
         }
 
         private void DrawConnectingLabel(Graphics graphics)
@@ -980,6 +1052,50 @@ namespace SorbyGamingClient
             {
                 Console.WriteLine($"Kunne ikke hente eventbaggrund: {ex.Message}");
             }
+        }
+
+        private async Task UpdateLogoAsync(string? logoUrl)
+        {
+            if (string.IsNullOrWhiteSpace(logoUrl))
+            {
+                LocalStore.SaveEventLogo(null);
+                SetLogo(null);
+                return;
+            }
+
+            try
+            {
+                byte[] imageBytes = await HttpClient.GetByteArrayAsync(logoUrl);
+                LocalStore.SaveEventLogo(imageBytes);
+                SetLogo(imageBytes);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Kunne ikke hente logoet: {ex.Message}");
+            }
+        }
+
+        private void SetLogo(byte[]? imageBytes)
+        {
+            Image? newImage = null;
+
+            try
+            {
+                if (imageBytes != null)
+                {
+                    using MemoryStream stream = new MemoryStream(imageBytes);
+                    using Image temporaryImage = Image.FromStream(stream);
+                    newImage = new Bitmap(temporaryImage);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Kunne ikke vise logoet: {ex.Message}");
+            }
+
+            logoImage?.Dispose();
+            logoImage = newImage;
+            Invalidate();
         }
 
         private void SetBackgroundImage(byte[]? imageBytes, string? fit)
@@ -1165,6 +1281,14 @@ namespace SorbyGamingClient
             timerOverlay = new SessionTimerOverlay(durationSeconds);
             timerOverlay.Show();
 
+            // Eventets spil: start det (ét spil) eller vis spilmenuen (flere).
+            List<EventGame> games = LocalStore.ResolveGames(cachedEvent);
+
+            if (games.Count > 0 && !gameGuard.Start(games))
+            {
+                Console.WriteLine("Ingen af eventets spil findes på denne PC - sessionen kører uden spil-lås.");
+            }
+
             sessionTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             sessionTimer.Tick += SessionTimer_Tick;
             sessionTimer.Start();
@@ -1210,6 +1334,7 @@ namespace SorbyGamingClient
 
             Console.WriteLine("Session afsluttet.");
 
+            gameGuard.Stop(closeGames: true);
             CloseTimerOverlay();
             inSession = false;
             SendPcInfo();
@@ -1256,7 +1381,9 @@ namespace SorbyGamingClient
         // ---------------------------------------------------------
 
         private const int AdminHotkeyId = 0x5347;
+        private const int EndSessionHotkeyId = 0x5346;
         private bool globalHotkeyRegistered;
+        private bool endSessionHotkeyRegistered;
         private bool adminMenuOpen;
 
         private void SetupHotkey()
@@ -1267,6 +1394,14 @@ namespace SorbyGamingClient
             if (!globalHotkeyRegistered)
             {
                 Console.WriteLine("Ctrl+Shift+S kunne ikke registreres globalt. Den virker kun, når låseskærmen har fokus.");
+            }
+
+            // Ctrl+Shift+F: afslut sessionen før tid (kræver admin-kode).
+            endSessionHotkeyRegistered = NativeWindowHelper.RegisterGlobalHotkey(Handle, EndSessionHotkeyId, Keys.F);
+
+            if (!endSessionHotkeyRegistered)
+            {
+                Console.WriteLine("Ctrl+Shift+F kunne ikke registreres globalt.");
             }
 
             KeyPreview = true;
@@ -1285,7 +1420,18 @@ namespace SorbyGamingClient
         {
             if (m.Msg == NativeWindowHelper.WM_HOTKEY && (int)m.WParam == AdminHotkeyId)
             {
-                BeginInvoke(new Action(ShowAdminLogin));
+                BeginInvoke(new Action(() => ShowAdminLogin()));
+                return;
+            }
+
+            if (m.Msg == NativeWindowHelper.WM_HOTKEY && (int)m.WParam == EndSessionHotkeyId)
+            {
+                // Kun relevant under en session; ellers sker der ingenting.
+                if (inSession)
+                {
+                    BeginInvoke(new Action(() => ShowAdminLogin(AdminChoice.EndSession)));
+                }
+
                 return;
             }
 
@@ -1296,7 +1442,7 @@ namespace SorbyGamingClient
         // ADMIN LOGIN
         // ---------------------------------------------------------
 
-        private void ShowAdminLogin()
+        private void ShowAdminLogin(AdminChoice enterChoice = AdminChoice.Settings)
         {
             // Genvejen kan trykkes igen, mens menuen allerede er åben.
             if (adminMenuOpen || IsDisposed)
@@ -1306,10 +1452,13 @@ namespace SorbyGamingClient
 
             AdminChoice choice;
             adminMenuOpen = true;
+            gameGuard.Paused = true;
 
             try
             {
-                using AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, updateService.CurrentVersion, code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId));
+                using AdminMenuForm menu = new AdminMenuForm(PcId, isOnline, updateService.CurrentVersion,
+                    code => AdminCodeVerifier.VerifyAsync(ServerUrl, code, PcId),
+                    inSession, cachedEvent?.Games.Count > 0, enterChoice);
                 // Under en session er låseskærmen skjult; så skal menuen selv tage fokus.
                 menu.Shown += (sender, e) => NativeWindowHelper.ForceForeground(menu.Handle);
                 menu.ShowDialog(this);
@@ -1318,11 +1467,41 @@ namespace SorbyGamingClient
             finally
             {
                 adminMenuOpen = false;
+                gameGuard.Paused = false;
             }
 
             if (choice == AdminChoice.StopEvent)
             {
                 Application.Exit();
+                return;
+            }
+
+            if (choice == AdminChoice.EndSession)
+            {
+                if (inSession)
+                {
+                    Console.WriteLine("Sessionen afsluttes før tid fra admin-menuen.");
+                    _ = EndSession();
+                }
+
+                return;
+            }
+
+            if (choice == AdminChoice.Games && cachedEvent != null)
+            {
+                gameGuard.Paused = true;
+
+                try
+                {
+                    using GamePathsForm gamesForm = new GamePathsForm(cachedEvent);
+                    gamesForm.Shown += (sender, e) => NativeWindowHelper.ForceForeground(gamesForm.Handle);
+                    gamesForm.ShowDialog(this);
+                }
+                finally
+                {
+                    gameGuard.Paused = false;
+                }
+
                 return;
             }
 
@@ -1351,6 +1530,14 @@ namespace SorbyGamingClient
                 globalHotkeyRegistered = false;
             }
 
+            if (endSessionHotkeyRegistered)
+            {
+                NativeWindowHelper.UnregisterGlobalHotkey(Handle, EndSessionHotkeyId);
+                endSessionHotkeyRegistered = false;
+            }
+
+            gameGuard.Dispose();
+
             sessionTimer?.Stop();
             sessionTimer?.Dispose();
             sessionTimer = null;
@@ -1373,6 +1560,8 @@ namespace SorbyGamingClient
 
             qrData?.Dispose();
             qrData = null;
+            logoImage?.Dispose();
+            logoImage = null;
             composedBackground?.Dispose();
             composedBackground = null;
             backgroundSource?.Dispose();
