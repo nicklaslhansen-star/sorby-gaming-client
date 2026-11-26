@@ -1282,11 +1282,14 @@ namespace SorbyGamingClient
             timerOverlay.Show();
 
             // Eventets spil: start det (ét spil) eller vis spilmenuen (flere).
-            List<EventGame> games = LocalStore.ResolveGames(cachedEvent);
-
-            if (games.Count > 0 && !gameGuard.Start(games))
+            if (cachedEvent?.Games.Count > 0)
             {
-                Console.WriteLine("Ingen af eventets spil findes på denne PC - sessionen kører uden spil-lås.");
+                List<PlayableGame> games = GameLibrary.Match(cachedEvent.Games);
+
+                if (!gameGuard.Start(games))
+                {
+                    Console.WriteLine("Ingen af eventets spil findes på denne PC - sessionen kører uden spil-lås.");
+                }
             }
 
             sessionTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -1493,7 +1496,7 @@ namespace SorbyGamingClient
 
                 try
                 {
-                    using GamePathsForm gamesForm = new GamePathsForm(cachedEvent);
+                    using GameStatusForm gamesForm = new GameStatusForm(cachedEvent);
                     gamesForm.Shown += (sender, e) => NativeWindowHelper.ForceForeground(gamesForm.Handle);
                     gamesForm.ShowDialog(this);
                 }

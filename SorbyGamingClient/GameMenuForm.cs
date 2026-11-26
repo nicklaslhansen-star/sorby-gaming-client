@@ -16,9 +16,9 @@ namespace SorbyGamingClient
         private readonly TextLabel subtitleLabel;
         private readonly TextLabel eyebrowLabel;
 
-        public event Action<EventGame>? GameChosen;
+        public event Action<PlayableGame>? GameChosen;
 
-        public GameMenuForm(List<EventGame> games)
+        public GameMenuForm(List<PlayableGame> games)
         {
             Text = "Sørby Gaming - spil";
             Icon = Theme.AppIcon;
@@ -39,18 +39,24 @@ namespace SorbyGamingClient
 
             Controls.AddRange(new Control[] { eyebrowLabel, titleLabel, subtitleLabel, banner });
 
-            foreach (EventGame game in games)
+            foreach (PlayableGame game in games)
             {
-                bool exists = File.Exists(game.Path);
-                ActionTile tile = new ActionTile("", game.Name, exists ? "Spil nu" : "Findes ikke på denne PC")
-                {
-                    Enabled = exists
-                };
+                ActionTile tile = new ActionTile("", game.Name, $"{PlatformName(game.Installed.Platform)} · Spil nu");
                 tile.Click += (sender, e) => GameChosen?.Invoke(game);
                 tiles.Add(tile);
                 Controls.Add(tile);
             }
         }
+
+        public static string PlatformName(string platform) => platform switch
+        {
+            "steam" => "Steam",
+            "epic" => "Epic Games",
+            "riot" => "Riot Games",
+            "minecraft" => "Microsoft",
+            "roblox" => "Roblox",
+            _ => platform
+        };
 
         private int S(float value) => (int)Math.Round(value * DeviceDpi / 96f);
 

@@ -34,8 +34,9 @@ namespace SorbyGamingClient
         };
 
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 1000 };
-        private List<EventGame> games = new List<EventGame>();
+        private List<PlayableGame> games = new List<PlayableGame>();
         private List<string> gameFolders = new List<string>();
+        private List<string> platformFolders = new List<string>();
         private GameMenuForm? menu;
         private DateTime graceUntil;
         private bool running;
@@ -50,37 +51,35 @@ namespace SorbyGamingClient
             timer.Tick += (sender, e) => Check();
         }
 
-        // Returnerer false, hvis eventet ikke har spil, der findes på denne PC.
-        public bool Start(List<EventGame> eventGames)
+        // Returnerer false, hvis ingen af eventets spil findes på denne PC.
+        public bool Start(List<PlayableGame> playable)
         {
             Stop(closeGames: false);
 
-            games = eventGames;
-            List<EventGame> available = games.Where(game => File.Exists(game.Path)).ToList();
-
-            foreach (EventGame missing in games.Except(available))
+            if (playable.Count == 0)
             {
-                Console.WriteLine($"Spillet {missing.Name} findes ikke på denne PC: {missing.Path}");
-            }
-
-            if (available.Count == 0)
-            {
-                // Uden et spil, der kan startes, låses PC'en ikke til spil.
                 return false;
             }
 
-            gameFolders = available
-                .Select(game => Path.GetDirectoryName(game.Path))
-                .Where(folder => folder != null && IsSafeGameFolder(folder))
-                .Select(folder => EnsureTrailingSlash(folder!))
+            games = playable;
+            gameFolders = games
+                .SelectMany(game => game.Installed.GameFolders)
+                .Where(IsSafeGameFolder)
+                .Select(EnsureTrailingSlash)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            platformFolders = games
+                .SelectMany(game => game.Installed.PlatformFolders)
+                .Where(IsSafeGameFolder)
+                .Select(EnsureTrailingSlash)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             running = true;
 
-            if (available.Count == 1)
+            if (games.Count == 1)
             {
-                Launch(available[0]);
+                Launch(games[0]);
             }
             else
             {
@@ -107,7 +106,7 @@ namespace SorbyGamingClient
 
             if (closeGames && wasRunning)
             {
-                CloseGames(games.Select(game => game.Path).ToList(), gameFolders.ToList());
+                CloseGames(gameFolders.ToList());
             }
         }
 
@@ -169,12 +168,16 @@ namespace SorbyGamingClient
                 return true;
             }
 
-            if (games.Any(game => string.Equals(game.Path, path, StringComparison.OrdinalIgnoreCase)))
+            if (gameFolders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }
 
-            if (gameFolders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase)))
+            // Platformens egne programmer (Steam, Epic-launcheren, Riot Client)
+            // er tilladt, men ikke andre spil, der ligger i platformens mappe.
+            bool otherGame = path.Contains(@"\steamapps\common\", StringComparison.OrdinalIgnoreCase);
+
+            if (!otherGame && platformFolders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }
@@ -197,14 +200,14 @@ namespace SorbyGamingClient
         // START OG LUK SPIL
         // ---------------------------------------------------------
 
-        private void Launch(EventGame game)
+        private void Launch(PlayableGame game)
         {
             menu?.Hide();
             graceUntil = DateTime.Now + LaunchGrace;
 
             try
             {
-                Process? existing = FindRunning(game.Path);
+                Process? existing = FindRunning(game.Installed.GameFolders);
 
                 if (existing != null)
                 {
@@ -214,12 +217,8 @@ namespace SorbyGamingClient
                     return;
                 }
 
-                Console.WriteLine($"Starter {game.Name}: {game.Path}");
-                Process.Start(new ProcessStartInfo(game.Path)
-                {
-                    UseShellExecute = true,
-                    WorkingDirectory = Path.GetDirectoryName(game.Path) ?? ""
-                });
+                Console.WriteLine($"Starter {game.Name}: {game.Installed.LaunchTarget} {game.Installed.LaunchArguments}");
+                Process.Start(game.Installed.StartInfo());
             }
             catch (Exception ex)
             {
@@ -230,19 +229,30 @@ namespace SorbyGamingClient
             }
         }
 
-        private static Process? FindRunning(string exePath)
+        // En kørende proces fra spillets mapper, der har et vindue.
+        private static Process? FindRunning(List<string> folders)
         {
-            foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(exePath)))
+            List<string> prefixes = folders.Select(EnsureTrailingSlash).ToList();
+            Process? found = null;
+
+            foreach (Process process in Process.GetProcesses())
             {
-                if (string.Equals(ImagePath((uint)process.Id), exePath, StringComparison.OrdinalIgnoreCase))
+                if (found == null && process.Id != Environment.ProcessId)
                 {
-                    return process;
+                    string? path = ImagePath((uint)process.Id);
+
+                    if (path != null && prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) &&
+                        process.MainWindowHandle != IntPtr.Zero)
+                    {
+                        found = process;
+                        continue;
+                    }
                 }
 
                 process.Dispose();
             }
 
-            return null;
+            return found;
         }
 
         private static void BringToFront(Process process)
@@ -263,7 +273,7 @@ namespace SorbyGamingClient
         }
 
         // Lukker spillene (og programmer fra spillenes mapper) i baggrunden.
-        private static void CloseGames(List<string> exePaths, List<string> folders)
+        private static void CloseGames(List<string> folders)
         {
             int ownId = Environment.ProcessId;
 
@@ -285,8 +295,7 @@ namespace SorbyGamingClient
                             continue;
                         }
 
-                        bool isGame = exePaths.Any(exe => string.Equals(exe, path, StringComparison.OrdinalIgnoreCase)) ||
-                                      folders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase));
+                        bool isGame = folders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase));
 
                         if (isGame)
                         {

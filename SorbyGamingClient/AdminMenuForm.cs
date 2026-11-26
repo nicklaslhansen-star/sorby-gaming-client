@@ -71,7 +71,7 @@ namespace SorbyGamingClient
 
             if (hasGames)
             {
-                AddTile("", "Spil på denne PC", "Ret stien til eventets spil på netop denne PC", AdminChoice.Games);
+                AddTile("", "Spil på denne PC", "Se hvilke af eventets spil PC'en har fundet", AdminChoice.Games);
             }
 
             AddTile("", "Offline-indstillinger", "Åbningstid, lokal baggrund og QR-placering", AdminChoice.Settings);

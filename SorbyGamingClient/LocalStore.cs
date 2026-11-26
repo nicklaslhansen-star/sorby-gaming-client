@@ -25,7 +25,6 @@ namespace SorbyGamingClient
         private static readonly string SessionsPath = Path.Combine(Folder, "offline-sessions.json");
         private static readonly string PcPath = Path.Combine(Folder, "pc.json");
         private static readonly string EventLogoPath = Path.Combine(Folder, "event-logo.img");
-        private static readonly string GamePathsPath = Path.Combine(Folder, "game-paths.json");
 
         private static readonly object SessionsLock = new object();
 
@@ -121,39 +120,6 @@ namespace SorbyGamingClient
         }
 
         public static byte[]? LoadEventLogo() => ReadBytes(EventLogoPath);
-
-        // ---------------------------------------------------------
-        // SPIL (stier kan rettes lokalt på den enkelte PC)
-        // ---------------------------------------------------------
-
-        // Spil-id -> lokal sti, når spillet ligger et andet sted på denne PC.
-        public static Dictionary<string, string> LoadGamePaths() =>
-            Read<Dictionary<string, string>>(GamePathsPath) ?? new Dictionary<string, string>();
-
-        public static void SaveGamePaths(Dictionary<string, string> paths) => Write(GamePathsPath, paths);
-
-        // Eventets spil med denne PC's egne stier, hvor de er rettet lokalt.
-        public static List<EventGame> ResolveGames(CachedEvent? cachedEvent)
-        {
-            if (cachedEvent?.Games == null || cachedEvent.Games.Count == 0)
-            {
-                return new List<EventGame>();
-            }
-
-            Dictionary<string, string> local = LoadGamePaths();
-
-            return cachedEvent.Games
-                .Where(game => !string.IsNullOrWhiteSpace(game.Path))
-                .Select(game => new EventGame
-                {
-                    Id = game.Id,
-                    Name = game.Name,
-                    Path = local.TryGetValue(game.Id, out string? localPath) && !string.IsNullOrWhiteSpace(localPath)
-                        ? localPath
-                        : game.Path
-                })
-                .ToList();
-        }
 
         // ---------------------------------------------------------
         // MANUELLE INDSTILLINGER (sat i admin-menuen på PC'en)
@@ -333,12 +299,13 @@ namespace SorbyGamingClient
         public string? LogoUrl { get; set; }
     }
 
-    // Et spil, der må spilles under eventet. Path er spillets .exe-fil.
+    // Et spil, eventet ønsker vist: platform (steam, epic, riot, minecraft,
+    // roblox) og navn. PC'en matcher det mod sine installerede spil.
     internal sealed class EventGame
     {
         public string Id { get; set; } = "";
+        public string Platform { get; set; } = "";
         public string Name { get; set; } = "";
-        public string Path { get; set; } = "";
     }
 
     // QR-kodens placering på baggrunden: X og Y er midten og Size er bredden,
