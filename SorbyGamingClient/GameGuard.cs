@@ -64,6 +64,9 @@ namespace SorbyGamingClient
 
         public bool IsRunning => running;
 
+        // Er spilmenuen eller "Starter spillet"-skærmen fremme?
+        public bool MenuVisible => menu != null && menu.Visible;
+
         public GameGuard()
         {
             timer.Tick += (sender, e) => Check();
@@ -96,6 +99,14 @@ namespace SorbyGamingClient
 
             running = true;
 
+            // Programmet kobler sig aldrig på spillenes tråde (kun egne vinduer).
+            List<string> folders = gameFolders.ToList();
+            NativeWindowHelper.NoAttachProcess = processId =>
+            {
+                string? path = ImagePath(processId);
+                return path != null && folders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase));
+            };
+
             if (games.Count == 1)
             {
                 Launch(games[0]);
@@ -117,6 +128,7 @@ namespace SorbyGamingClient
             currentGame = null;
             timer.Stop();
             ActivityLog.End("game");
+            NativeWindowHelper.NoAttachProcess = null;
 
             if (menu != null)
             {
@@ -490,34 +502,62 @@ namespace SorbyGamingClient
         }
 
         // Lukker spillene (og programmer fra spillenes mapper) i baggrunden.
+        // Først bedes spillet lukke pænt (som når man trykker på krydset), så
+        // det kan gemme og melde sig af. Kun hvis det stadig kører efter et par
+        // sekunder, stoppes det. Anti-cheat-programmer stoppes aldrig.
         private static void CloseGames(List<string> folders)
         {
             int ownId = Environment.ProcessId;
 
-            _ = Task.Run(() =>
+            _ = Task.Run(async () =>
             {
+                List<Process> games = new List<Process>();
+
                 foreach (Process process in Process.GetProcesses())
+                {
+                    string? path = process.Id == ownId ? null : ImagePath((uint)process.Id);
+
+                    if (path != null && folders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase)) &&
+                        !IsAntiCheat(path))
+                    {
+                        games.Add(process);
+                    }
+                    else
+                    {
+                        process.Dispose();
+                    }
+                }
+
+                foreach (Process process in games)
                 {
                     try
                     {
-                        if (process.Id == ownId)
+                        if (process.CloseMainWindow())
                         {
-                            continue;
+                            Console.WriteLine($"Beder {process.ProcessName} om at lukke.");
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Kunne ikke bede et spil om at lukke: {ex.Message}");
+                    }
+                }
 
-                        string? path = ImagePath((uint)process.Id);
+                DateTime deadline = DateTime.Now + GracefulClose;
 
-                        if (path == null)
+                while (DateTime.Now < deadline && games.Any(IsAlive))
+                {
+                    await Task.Delay(250);
+                }
+
+                foreach (Process process in games)
+                {
+                    try
+                    {
+                        if (IsAlive(process))
                         {
-                            continue;
-                        }
-
-                        bool isGame = folders.Any(folder => path.StartsWith(folder, StringComparison.OrdinalIgnoreCase));
-
-                        if (isGame)
-                        {
-                            Console.WriteLine($"Lukker {path}");
-                            process.Kill(entireProcessTree: true);
+                            Console.WriteLine($"Lukker {process.ProcessName}");
+                            process.Kill(entireProcessTree: false);
                         }
                     }
                     catch (Exception ex)
@@ -530,6 +570,31 @@ namespace SorbyGamingClient
                     }
                 }
             });
+        }
+
+        private static readonly TimeSpan GracefulClose = TimeSpan.FromSeconds(5);
+
+        private static bool IsAlive(Process process)
+        {
+            try
+            {
+                return !process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Anti-cheat ligger ofte i spillets mappe; den skal have lov at lukke sig selv.
+        private static bool IsAntiCheat(string path)
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            return name.Contains("anticheat", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("BE", StringComparison.Ordinal) && name.Contains("Service", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("EAC", StringComparison.OrdinalIgnoreCase) ||
+                path.Contains(@"\EasyAntiCheat", StringComparison.OrdinalIgnoreCase) ||
+                path.Contains(@"\BattlEye", StringComparison.OrdinalIgnoreCase);
         }
 
         // Mapper, hvor alt indhold trygt kan regnes for "spillet". Ligger en

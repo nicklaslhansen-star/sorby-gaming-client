@@ -59,6 +59,93 @@ namespace SorbyGamingClient
             UnregisterHotKey(handle, id);
         }
 
+        // Processer, hvis tråde der aldrig kobles på (spillene under en session).
+        // Programmet rører aldrig spillets input - kun sine egne vinduer.
+        public static Func<uint, bool>? NoAttachProcess { get; set; }
+
+        // Kører et program i "eksklusiv fuldskærm" (Direct3D)? Så tegner spillet
+        // uden om Windows' skrivebord, og ingen almindelige vinduer kan ses
+        // ovenpå. Vinduer skubbes så ikke frem, da det kan få spillet til at blinke.
+        public static bool IsExclusiveFullscreen()
+        {
+            const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
+
+            try
+            {
+                return SHQueryUserNotificationState(out int state) == 0 && state == QUNS_RUNNING_D3D_FULL_SCREEN;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Ligger et andet synligt vindue over (en del af) vinduet?
+        public static bool IsCovered(IntPtr handle)
+        {
+            if (!GetWindowRect(handle, out RECT mine))
+            {
+                return false;
+            }
+
+            for (IntPtr above = GetWindow(handle, GW_HWNDPREV); above != IntPtr.Zero; above = GetWindow(above, GW_HWNDPREV))
+            {
+                if (!IsWindowVisible(above) || IsCloaked(above) || !GetWindowRect(above, out RECT other))
+                {
+                    continue;
+                }
+
+                bool overlaps = other.Left < mine.Right && other.Right > mine.Left && other.Top < mine.Bottom && other.Bottom > mine.Top;
+
+                if (overlaps)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsCloaked(IntPtr handle)
+        {
+            const int DWMWA_CLOAKED = 14;
+
+            try
+            {
+                return DwmGetWindowAttribute(handle, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private const uint GW_HWNDPREV = 3;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+
+        [DllImport("shell32.dll")]
+        private static extern int SHQueryUserNotificationState(out int state);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
         public static void ForceForeground(IntPtr handle)
         {
             try
@@ -71,8 +158,10 @@ namespace SorbyGamingClient
                 }
 
                 uint currentThread = GetCurrentThreadId();
-                uint foregroundThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, IntPtr.Zero);
-                bool attached = foregroundThread != 0 && foregroundThread != currentThread &&
+                uint foregroundProcess = 0;
+                uint foregroundThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, out foregroundProcess);
+                bool protectedGame = foregroundProcess != 0 && NoAttachProcess?.Invoke(foregroundProcess) == true;
+                bool attached = !protectedGame && foregroundThread != 0 && foregroundThread != currentThread &&
                     AttachThreadInput(currentThread, foregroundThread, true);
 
                 try

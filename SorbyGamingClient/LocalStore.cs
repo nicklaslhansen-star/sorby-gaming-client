@@ -296,6 +296,29 @@ namespace SorbyGamingClient
         // intet logo.
         public List<EventGame> Games { get; set; } = new List<EventGame>();
         public string? LogoUrl { get; set; }
+
+        // Sponsorbannere. Ældre servere sender dem ikke; så vises ingen.
+        public SponsorSetup? Sponsors { get; set; }
+    }
+
+    // Eventets sponsorer: to bannere ved QR-koden og et banner, der glider
+    // ind i spillet med jævne mellemrum.
+    internal sealed class SponsorSetup
+    {
+        public List<SponsorItem> QrLeft { get; set; } = new List<SponsorItem>();
+        public List<SponsorItem> QrRight { get; set; } = new List<SponsorItem>();
+        public int QrRotateSeconds { get; set; } = 10;
+        public List<SponsorItem> Game { get; set; } = new List<SponsorItem>();
+        public string GameSide { get; set; } = "right";
+        public int GameEveryMinutes { get; set; } = 10;
+        public int GameShowSeconds { get; set; } = 15;
+    }
+
+    internal sealed class SponsorItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Url { get; set; } = "";
     }
 
     // Et spil, eventet ønsker vist: platform (steam, epic, riot, minecraft,

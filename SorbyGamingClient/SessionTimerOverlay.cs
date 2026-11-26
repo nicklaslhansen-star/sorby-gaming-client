@@ -40,8 +40,8 @@ namespace SorbyGamingClient
         private float expand;
         private double autoExpandUntil;
         private double lastFrame;
-        private double lastRender = -1;
         private double lastTopmost;
+        private string lastRenderKey = "";
         private bool dirty = true;
 
         public SessionTimerOverlay(int durationSeconds)
@@ -136,13 +136,18 @@ namespace SorbyGamingClient
             float delta = (float)Math.Min(0.1, now - lastFrame);
             lastFrame = now;
 
-            // Spil, der selv lægger sig øverst, kan skjule timeren. Derfor
-            // skubbes den frem igen hvert sekund (uden at tage fokus).
-            // Spil i "eksklusiv fuldskærm" tegner dog stadig hen over alt.
+            // Spil, der selv lægger sig øverst, kan skjule timeren. Den skubbes
+            // kun frem, når et andet vindue faktisk dækker den - at gøre det
+            // hvert sekund fik timeren til at flimre oven på spillet.
+            // I "eksklusiv fuldskærm" kan intet vindue ses ovenpå; så lades den være.
             if (now - lastTopmost >= 1)
             {
                 lastTopmost = now;
-                SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+
+                if (NativeWindowHelper.IsCovered(Handle) && !NativeWindowHelper.IsExclusiveFullscreen())
+                {
+                    SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+                }
             }
 
             bool wantExpanded = IsHovered() || now < autoExpandUntil || remainingSeconds <= 10;
@@ -155,17 +160,27 @@ namespace SorbyGamingClient
                 dirty = true;
             }
 
-            // Ringen glider jævnt; ellers er 4 billeder i sekundet rigeligt.
-            // Det sidste minut pulserer den, så den tegnes hver gang.
-            bool animating = expand > 0f && expand < 1f;
-            double interval = animating || remainingSeconds <= 60 ? 0 : 0.25;
+            // Timeren tegnes kun igen, når det, man ser, faktisk ændrer sig
+            // (ringen flytter sig en halv grad, tallet skifter, den folder sig
+            // ud, eller den pulserer det sidste minut). Ellers står den helt stille.
+            string key = RenderKey(now);
 
-            if (dirty || now - lastRender >= interval)
+            if (dirty || key != lastRenderKey)
             {
                 Render();
-                lastRender = now;
+                lastRenderKey = key;
                 dirty = false;
             }
+        }
+
+        private string RenderKey(double now)
+        {
+            double fraction = Math.Clamp(SmoothRemaining() / totalSeconds, 0, 1);
+            int halfDegrees = (int)Math.Round(fraction * 720);
+            int pulse = remainingSeconds <= 60 ? (int)Math.Round(now * 30) : 0;
+            bool textShown = expand > 0.35f;
+            string text = textShown ? $"{LongTime(remainingSeconds)}|{endsAt:HH:mm}" : "";
+            return $"{halfDegrees}|{ShortTime(remainingSeconds)}|{expand:0.000}|{pulse}|{text}";
         }
 
         private bool IsHovered()

@@ -70,6 +70,15 @@ namespace SorbyGamingClient
         // Eventets logo over QR-koden.
         private Image? logoImage;
 
+        // Sponsorbannere i venstre og højre side af QR-skærmen (skifter, hvis
+        // der er flere) og banneret, der glider ind under spillet.
+        private List<Image> qrLeftSponsors = new List<Image>();
+        private List<Image> qrRightSponsors = new List<Image>();
+        private int qrSponsorIndex;
+        private System.Windows.Forms.Timer? sponsorRotateTimer;
+        private SponsorBannerOverlay? sponsorOverlay;
+        private EventHandler? sponsorFrameChanged;
+
         // Har eventet ingen baggrund, vises den manuelle baggrund bag QR-koden,
         // og så bruges den lokale QR-placering.
         private bool eventHasBackground;
@@ -98,6 +107,7 @@ namespace SorbyGamingClient
 
             Console.WriteLine($"Sørby Gaming version {updateService.CurrentVersion} · server {ServerUrl}");
             SetLogo(LocalStore.LoadEventLogo());
+            LoadQrSponsors();
 
             // Efter en opdatering starter PC'en igen som samme PC-nummer.
             string? savedPcId = LocalStore.LoadPcId();
@@ -620,6 +630,7 @@ namespace SorbyGamingClient
                 cachedEvent = message.Event;
                 LocalStore.SaveEvent(cachedEvent);
                 _ = UpdateLogoAsync(cachedEvent?.LogoUrl);
+                _ = UpdateSponsorsAsync();
             }
 
             if (message.HasBackground)
@@ -875,6 +886,8 @@ namespace SorbyGamingClient
                 return;
             }
 
+            DrawQrSponsors(e.Graphics);
+
             if (!showQr || qrData == null)
             {
                 return;
@@ -916,6 +929,136 @@ namespace SorbyGamingClient
                 graphics.DrawImage(logoImage, logoRect);
                 graphics.InterpolationMode = oldMode;
             }
+        }
+
+        // ---------------------------------------------------------
+        // SPONSORER
+        // ---------------------------------------------------------
+
+        // Bannernes felter i brøkdele af skærmen - samme mål som web-panelet.
+        private const float SponsorMargin = 0.05f;
+        private const float SponsorWidth = 0.2f;
+        private const float SponsorTop = 0.13f;
+        private const float SponsorHeight = 0.74f;
+
+        private Rectangle SponsorSlot(bool right)
+        {
+            float x = right ? 1 - SponsorMargin - SponsorWidth : SponsorMargin;
+            return Rectangle.Round(new RectangleF(
+                ClientSize.Width * x, ClientSize.Height * SponsorTop,
+                ClientSize.Width * SponsorWidth, ClientSize.Height * SponsorHeight));
+        }
+
+        private void DrawQrSponsors(Graphics graphics)
+        {
+            DrawSponsor(graphics, qrLeftSponsors, SponsorSlot(false));
+            DrawSponsor(graphics, qrRightSponsors, SponsorSlot(true));
+        }
+
+        private void DrawSponsor(Graphics graphics, List<Image> images, Rectangle slot)
+        {
+            if (images.Count == 0)
+            {
+                return;
+            }
+
+            Image image = images[qrSponsorIndex % images.Count];
+
+            if (SponsorImages.IsAnimated(image))
+            {
+                ImageAnimator.UpdateFrames(image);
+            }
+
+            System.Drawing.Drawing2D.InterpolationMode oldMode = graphics.InterpolationMode;
+            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            graphics.DrawImage(image, SponsorImages.Fit(image, slot));
+            graphics.InterpolationMode = oldMode;
+        }
+
+        private async Task UpdateSponsorsAsync()
+        {
+            await SponsorImages.SyncAsync(cachedEvent?.Sponsors, HttpClient);
+
+            if (!IsDisposed)
+            {
+                LoadQrSponsors();
+            }
+        }
+
+        // Indlæser bannerne fra de lokalt gemte billeder (virker også offline).
+        private void LoadQrSponsors()
+        {
+            sponsorFrameChanged ??= (sender, e) =>
+            {
+                // Kaldes fra en baggrundstråd, når en GIF skal vise næste billede.
+                if (IsHandleCreated && !IsDisposed && !inSession)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        Invalidate(SponsorSlot(false));
+                        Invalidate(SponsorSlot(true));
+                    }));
+                }
+            };
+
+            SponsorImages.DisposeAll(qrLeftSponsors, sponsorFrameChanged);
+            SponsorImages.DisposeAll(qrRightSponsors, sponsorFrameChanged);
+            qrLeftSponsors = SponsorImages.LoadAll(cachedEvent?.Sponsors?.QrLeft);
+            qrRightSponsors = SponsorImages.LoadAll(cachedEvent?.Sponsors?.QrRight);
+            qrSponsorIndex = 0;
+
+            foreach (Image image in qrLeftSponsors.Concat(qrRightSponsors).Where(SponsorImages.IsAnimated))
+            {
+                ImageAnimator.Animate(image, sponsorFrameChanged);
+            }
+
+            sponsorRotateTimer?.Stop();
+            sponsorRotateTimer?.Dispose();
+            sponsorRotateTimer = null;
+
+            if (qrLeftSponsors.Count > 1 || qrRightSponsors.Count > 1)
+            {
+                int seconds = Math.Clamp(cachedEvent?.Sponsors?.QrRotateSeconds ?? 10, 3, 120);
+                sponsorRotateTimer = new System.Windows.Forms.Timer { Interval = seconds * 1000 };
+                sponsorRotateTimer.Tick += (sender, e) =>
+                {
+                    qrSponsorIndex++;
+                    Invalidate(SponsorSlot(false));
+                    Invalidate(SponsorSlot(true));
+                };
+                sponsorRotateTimer.Start();
+            }
+
+            Invalidate();
+        }
+
+        private void StartSponsorOverlay()
+        {
+            CloseSponsorOverlay();
+            SponsorSetup? setup = cachedEvent?.Sponsors;
+
+            if (setup == null || setup.Game.Count == 0)
+            {
+                return;
+            }
+
+            SponsorBannerOverlay overlay = new SponsorBannerOverlay(setup, () => gameGuard.MenuVisible);
+
+            if (!overlay.HasSponsors)
+            {
+                overlay.Dispose();
+                return;
+            }
+
+            sponsorOverlay = overlay;
+            sponsorOverlay.Show();
+        }
+
+        private void CloseSponsorOverlay()
+        {
+            sponsorOverlay?.Close();
+            sponsorOverlay?.Dispose();
+            sponsorOverlay = null;
         }
 
         private void DrawConnectingLabel(Graphics graphics)
@@ -1257,6 +1400,7 @@ namespace SorbyGamingClient
             CloseTimerOverlay();
             timerOverlay = new SessionTimerOverlay(durationSeconds);
             timerOverlay.Show();
+            StartSponsorOverlay();
 
             // Eventets spil: start det (ét spil) eller vis spilmenuen (flere).
             if (cachedEvent?.Games.Count > 0)
@@ -1298,6 +1442,7 @@ namespace SorbyGamingClient
             timerOverlay?.Close();
             timerOverlay?.Dispose();
             timerOverlay = null;
+            CloseSponsorOverlay();
         }
 
         // ---------------------------------------------------------
@@ -1545,6 +1690,11 @@ namespace SorbyGamingClient
             qrData = null;
             logoImage?.Dispose();
             logoImage = null;
+            CloseSponsorOverlay();
+            sponsorRotateTimer?.Stop();
+            sponsorRotateTimer?.Dispose();
+            SponsorImages.DisposeAll(qrLeftSponsors, sponsorFrameChanged);
+            SponsorImages.DisposeAll(qrRightSponsors, sponsorFrameChanged);
             composedBackground?.Dispose();
             composedBackground = null;
             backgroundSource?.Dispose();
