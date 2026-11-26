@@ -308,10 +308,22 @@ namespace SorbyGamingClient
         public List<SponsorItem> QrLeft { get; set; } = new List<SponsorItem>();
         public List<SponsorItem> QrRight { get; set; } = new List<SponsorItem>();
         public int QrRotateSeconds { get; set; } = 10;
+        // Felternes placering. Mangler de (ældre server), bruges standarden.
+        public BannerRect? QrLeftRect { get; set; }
+        public BannerRect? QrRightRect { get; set; }
         public List<SponsorItem> Game { get; set; } = new List<SponsorItem>();
         public string GameSide { get; set; } = "right";
         public int GameEveryMinutes { get; set; } = 10;
         public int GameShowSeconds { get; set; } = 15;
+    }
+
+    // Et felt på skærmen: øverste venstre hjørne og størrelse i brøkdele (0-1).
+    internal sealed class BannerRect
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
     }
 
     internal sealed class SponsorItem

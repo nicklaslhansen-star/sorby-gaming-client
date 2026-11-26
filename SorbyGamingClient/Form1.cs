@@ -943,9 +943,22 @@ namespace SorbyGamingClient
 
         private Rectangle SponsorSlot(bool right)
         {
-            float x = right ? 1 - SponsorMargin - SponsorWidth : SponsorMargin;
+            BannerRect? rect = right ? cachedEvent?.Sponsors?.QrRightRect : cachedEvent?.Sponsors?.QrLeftRect;
+
+            if (rect != null && rect.Width > 0.01 && rect.Height > 0.01)
+            {
+                double width = Math.Clamp(rect.Width, 0.01, 1);
+                double height = Math.Clamp(rect.Height, 0.01, 1);
+                double x = Math.Clamp(rect.X, 0, 1 - width);
+                double y = Math.Clamp(rect.Y, 0, 1 - height);
+                return Rectangle.Round(new RectangleF(
+                    (float)(ClientSize.Width * x), (float)(ClientSize.Height * y),
+                    (float)(ClientSize.Width * width), (float)(ClientSize.Height * height)));
+            }
+
+            float left = right ? 1 - SponsorMargin - SponsorWidth : SponsorMargin;
             return Rectangle.Round(new RectangleF(
-                ClientSize.Width * x, ClientSize.Height * SponsorTop,
+                ClientSize.Width * left, ClientSize.Height * SponsorTop,
                 ClientSize.Width * SponsorWidth, ClientSize.Height * SponsorHeight));
         }
 
