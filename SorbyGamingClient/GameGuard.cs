@@ -31,6 +31,8 @@ namespace SorbyGamingClient
         private static readonly TimeSpan SmallWindowSettle = TimeSpan.FromSeconds(20);
         // Starter spillet slet ikke, fjernes skærmen alligevel efter denne tid.
         private static readonly TimeSpan StartingTimeout = TimeSpan.FromSeconds(120);
+        // Har spillet været lukket så længe, kommer spilmenuen frem igen.
+        private static readonly TimeSpan ClosedBeforeMenu = TimeSpan.FromSeconds(3);
 
         // Hjælpeprogrammer, som spil ofte åbner (launchere, anti-cheat, crash-rapporter).
         private static readonly HashSet<string> HelperProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -52,6 +54,10 @@ namespace SorbyGamingClient
         private PlayableGame? starting;
         private DateTime startingUntil;
         private DateTime windowSeenSince = DateTime.MinValue;
+        // Spillet, der sidst blev startet, og hvornår det sidst kørte.
+        private PlayableGame? currentGame;
+        private DateTime currentGameSeen;
+        private int? eventId;
 
         // Sættes, mens admin-menuen er åben, så vagten ikke dækker den.
         public bool Paused { get; set; }
@@ -64,9 +70,10 @@ namespace SorbyGamingClient
         }
 
         // Returnerer false, hvis ingen af eventets spil findes på denne PC.
-        public bool Start(List<PlayableGame> playable)
+        public bool Start(List<PlayableGame> playable, int? eventId = null)
         {
             Stop(closeGames: false);
+            this.eventId = eventId;
 
             if (playable.Count == 0)
             {
@@ -107,7 +114,9 @@ namespace SorbyGamingClient
             bool wasRunning = running;
             running = false;
             starting = null;
+            currentGame = null;
             timer.Stop();
+            ActivityLog.End("game");
 
             if (menu != null)
             {
@@ -137,6 +146,11 @@ namespace SorbyGamingClient
             if (starting != null)
             {
                 CheckStarting();
+                return;
+            }
+
+            if (CheckGameClosed())
+            {
                 return;
             }
 
@@ -259,8 +273,67 @@ namespace SorbyGamingClient
             menu?.KeepOnTop();
         }
 
+        // Lukker spilleren spillet (eller går det ned), kommer spilmenuen frem,
+        // så der kan vælges et andet spil. Imens spillet kører, måles tiden i det.
+        private bool CheckGameClosed()
+        {
+            if (currentGame == null)
+            {
+                return false;
+            }
+
+            if (IsAnyRunning(currentGame.Installed.GameFolders))
+            {
+                currentGameSeen = DateTime.Now;
+                ActivityLog.Begin("game", eventId, currentGame.Name, currentGame.Installed.Platform);
+                return false;
+            }
+
+            if (DateTime.Now - currentGameSeen < ClosedBeforeMenu)
+            {
+                return false;
+            }
+
+            Console.WriteLine($"{currentGame.Name} er lukket - viser spilmenuen.");
+            currentGame = null;
+            ActivityLog.End("game");
+            ShowMenu();
+            return true;
+        }
+
+        private static bool IsAnyRunning(List<string> folders)
+        {
+            List<string> prefixes = folders.Select(EnsureTrailingSlash).ToList();
+            bool found = false;
+
+            foreach (Process process in Process.GetProcesses())
+            {
+                if (!found && process.Id != Environment.ProcessId)
+                {
+                    string? path = ImagePath((uint)process.Id);
+                    found = path != null && prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                }
+
+                process.Dispose();
+            }
+
+            return found;
+        }
+
+        private void SetCurrentGame(PlayableGame game)
+        {
+            currentGame = game;
+            currentGameSeen = DateTime.Now;
+            ActivityLog.Begin("game", eventId, game.Name, game.Installed.Platform);
+        }
+
         private void FinishStarting(IntPtr window)
         {
+            if (starting != null)
+            {
+                SetCurrentGame(starting);
+            }
+
             starting = null;
             windowSeenSince = DateTime.MinValue;
             graceUntil = DateTime.Now + SwitchGrace;
@@ -345,6 +418,7 @@ namespace SorbyGamingClient
                 if (existing != null)
                 {
                     Console.WriteLine($"{game.Name} kører allerede - hentes frem.");
+                    SetCurrentGame(game);
                     menu?.Hide();
                     graceUntil = DateTime.Now + SwitchGrace;
                     BringToFront(existing);

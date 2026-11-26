@@ -39,7 +39,7 @@ namespace SorbyGamingClient
             eyebrowLabel = new TextLabel("SØRBY ESPORT", 10, true, Theme.Accent);
             menuTitle = games.Count == 1 ? "Tilbage til spillet" : "Vælg et spil";
             titleLabel = new TextLabel(menuTitle, 26, true);
-            subtitleLabel = new TextLabel("Under sessionen kan du kun bruge eventets spil.", 12, color: Theme.Muted);
+            subtitleLabel = new TextLabel("Under sessionen kan du kun bruge eventets spil. Luk spillet for at vælge et andet.", 12, color: Theme.Muted);
             banner = new Banner();
 
             Controls.AddRange(new Control[] { eyebrowLabel, titleLabel, subtitleLabel, banner });
@@ -81,7 +81,7 @@ namespace SorbyGamingClient
             loadingName = null;
             dotsTimer.Stop();
             titleLabel.Text = menuTitle;
-            subtitleLabel.Text = "Under sessionen kan du kun bruge eventets spil.";
+            subtitleLabel.Text = "Under sessionen kan du kun bruge eventets spil. Luk spillet for at vælge et andet.";
             tiles.ForEach(tile => tile.Visible = true);
             LayoutContent();
         }

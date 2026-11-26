@@ -250,6 +250,8 @@ namespace SorbyGamingClient
 
         private void ConnectionTimer_Tick(object? sender, EventArgs e)
         {
+            ActivityLog.Checkpoint();
+
             if (!isOnline)
             {
                 _ = TryConnectAsync();
@@ -257,6 +259,7 @@ namespace SorbyGamingClient
             else if (PcId != null)
             {
                 _ = SessionSync.SyncAsync(ServerUrl, PcId, currentOfflineSession?.Id);
+                _ = ActivityLog.SyncAsync(ServerUrl, PcId);
             }
         }
 
@@ -358,6 +361,7 @@ namespace SorbyGamingClient
                     if (PcId != null)
                     {
                         _ = SessionSync.SyncAsync(ServerUrl, PcId, currentOfflineSession?.Id);
+                _ = ActivityLog.SyncAsync(ServerUrl, PcId);
                     }
                 });
 
@@ -767,6 +771,9 @@ namespace SorbyGamingClient
             {
                 return;
             }
+
+            // Låseskærmen er fremme: mål tiden, PC'en venter på en spiller.
+            ActivityLog.Begin("qr", cachedEvent?.Id);
 
             showQr = isOnline && QrUrl != null;
             bool waiting = awaitingConnection && !showQr;
@@ -1243,6 +1250,7 @@ namespace SorbyGamingClient
 
             inSession = true;
             remainingSeconds = durationSeconds;
+            ActivityLog.End("qr");
 
             Hide();
 
@@ -1255,7 +1263,7 @@ namespace SorbyGamingClient
             {
                 List<PlayableGame> games = GameLibrary.Match(cachedEvent.Games);
 
-                if (!gameGuard.Start(games))
+                if (!gameGuard.Start(games, cachedEvent.Id))
                 {
                     Console.WriteLine("Ingen af eventets spil findes på denne PC - sessionen kører uden spil-lås.");
                 }
@@ -1277,6 +1285,7 @@ namespace SorbyGamingClient
         {
             remainingSeconds--;
             timerOverlay?.SetRemaining(remainingSeconds);
+            ActivityLog.Checkpoint();
 
             if (remainingSeconds <= 0)
             {
@@ -1324,6 +1333,7 @@ namespace SorbyGamingClient
                 if (isOnline && PcId != null)
                 {
                     await SessionSync.SyncAsync(ServerUrl, PcId, null);
+                    _ = ActivityLog.SyncAsync(ServerUrl, PcId);
                 }
 
                 TryApplyUpdate();
@@ -1509,6 +1519,7 @@ namespace SorbyGamingClient
             }
 
             gameGuard.Dispose();
+            ActivityLog.EndAll();
 
             sessionTimer?.Stop();
             sessionTimer?.Dispose();
