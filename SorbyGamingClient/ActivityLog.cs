@@ -14,6 +14,8 @@ namespace SorbyGamingClient
     // Måler, hvordan PC'en bruges, til eventets statistik:
     //   "qr"   - tid med QR-skærmen vist (PC'en venter på en spiller)
     //   "game" - tid i hvert spil under en session
+    //   "sponsor-qr"   - tid en sponsor er vist på QR-skærmen (standen)
+    //   "sponsor-game" - tid/antal gange in-game-banneret er vist for en spiller
     // Ingen personoplysninger: kun tidspunkter, spil og event.
     //
     // Målingerne gemmes lokalt og sendes til serveren, når der er forbindelse.
@@ -37,25 +39,62 @@ namespace SorbyGamingClient
         {
             lock (FileLock)
             {
-                if (Open.TryGetValue(kind, out ActivityRecord? current) &&
-                    current.EventId == eventId && current.Game == game)
+                BeginLocked(kind, kind, eventId, game, platform, null);
+            }
+        }
+
+        // En sponsor vises i in-game-banneret (måles, til End(SponsorKey(...))).
+        public static string SponsorKey(string kind, int sponsorId) => $"{kind}:{sponsorId}";
+
+        public static void BeginSponsor(string kind, int? eventId, int sponsorId)
+        {
+            lock (FileLock)
+            {
+                BeginLocked(SponsorKey(kind, sponsorId), kind, eventId, null, null, sponsorId);
+            }
+        }
+
+        // Præcis disse sponsorer er synlige lige nu (fx på QR-skærmen). En
+        // sponsor i begge bannere tæller kun én gang.
+        public static void SetVisibleSponsors(string kind, int? eventId, IEnumerable<int> sponsorIds)
+        {
+            lock (FileLock)
+            {
+                HashSet<int> ids = sponsorIds.ToHashSet();
+                HashSet<string> wanted = ids.Select(id => SponsorKey(kind, id)).ToHashSet();
+
+                foreach (string key in Open.Keys.Where(key => key.StartsWith(kind + ":", StringComparison.Ordinal) && !wanted.Contains(key)).ToList())
                 {
-                    return;
+                    EndLocked(key);
                 }
 
-                EndLocked(kind);
-                DateTime now = DateTime.UtcNow;
-                ActivityRecord record = new ActivityRecord
+                foreach (int id in ids)
                 {
-                    Kind = kind,
-                    EventId = eventId,
-                    Game = game,
-                    Platform = platform,
-                    StartedAt = now,
-                    EndedAt = now
-                };
-                Open[kind] = record;
+                    BeginLocked(SponsorKey(kind, id), kind, eventId, null, null, id);
+                }
             }
+        }
+
+        private static void BeginLocked(string key, string kind, int? eventId, string? game, string? platform, int? sponsorId)
+        {
+            if (Open.TryGetValue(key, out ActivityRecord? current) &&
+                current.EventId == eventId && current.Game == game && current.SponsorId == sponsorId)
+            {
+                return;
+            }
+
+            EndLocked(key);
+            DateTime now = DateTime.UtcNow;
+            Open[key] = new ActivityRecord
+            {
+                Kind = kind,
+                EventId = eventId,
+                Game = game,
+                Platform = platform,
+                SponsorId = sponsorId,
+                StartedAt = now,
+                EndedAt = now
+            };
         }
 
         public static void End(string kind)
@@ -232,6 +271,7 @@ namespace SorbyGamingClient
         public int? EventId { get; set; }
         public string? Game { get; set; }
         public string? Platform { get; set; }
+        public int? SponsorId { get; set; }
         public DateTime StartedAt { get; set; }
         public DateTime EndedAt { get; set; }
 

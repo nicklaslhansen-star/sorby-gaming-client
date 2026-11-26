@@ -98,7 +98,25 @@ namespace SorbyGamingClient
         }
 
         public static List<Image> LoadAll(IEnumerable<SponsorItem>? items) =>
-            (items ?? Enumerable.Empty<SponsorItem>()).Select(Load).Where(image => image != null).Cast<Image>().ToList();
+            LoadWithItems(items).Select(pair => pair.Image).ToList();
+
+        // Billederne sammen med sponsoren, de hører til (til målingen af eksponering).
+        public static List<(SponsorItem Item, Image Image)> LoadWithItems(IEnumerable<SponsorItem>? items)
+        {
+            List<(SponsorItem, Image)> result = new List<(SponsorItem, Image)>();
+
+            foreach (SponsorItem item in items ?? Enumerable.Empty<SponsorItem>())
+            {
+                Image? image = Load(item);
+
+                if (image != null)
+                {
+                    result.Add((item, image));
+                }
+            }
+
+            return result;
+        }
 
         public static void DisposeAll(List<Image> images, EventHandler? frameChanged = null)
         {

@@ -74,6 +74,8 @@ namespace SorbyGamingClient
         // der er flere) og banneret, der glider ind under spillet.
         private List<Image> qrLeftSponsors = new List<Image>();
         private List<Image> qrRightSponsors = new List<Image>();
+        private List<SponsorItem> qrLeftItems = new List<SponsorItem>();
+        private List<SponsorItem> qrRightItems = new List<SponsorItem>();
         private int qrSponsorIndex;
         private System.Windows.Forms.Timer? sponsorRotateTimer;
         private SponsorBannerOverlay? sponsorOverlay;
@@ -788,6 +790,7 @@ namespace SorbyGamingClient
 
             showQr = isOnline && QrUrl != null;
             bool waiting = awaitingConnection && !showQr;
+            UpdateSponsorExposure();
             surveyPanel.Visible = !showQr && !waiting;
 
             if (waiting)
@@ -1016,8 +1019,12 @@ namespace SorbyGamingClient
 
             SponsorImages.DisposeAll(qrLeftSponsors, sponsorFrameChanged);
             SponsorImages.DisposeAll(qrRightSponsors, sponsorFrameChanged);
-            qrLeftSponsors = SponsorImages.LoadAll(cachedEvent?.Sponsors?.QrLeft);
-            qrRightSponsors = SponsorImages.LoadAll(cachedEvent?.Sponsors?.QrRight);
+            var left = SponsorImages.LoadWithItems(cachedEvent?.Sponsors?.QrLeft);
+            var right = SponsorImages.LoadWithItems(cachedEvent?.Sponsors?.QrRight);
+            qrLeftSponsors = left.Select(pair => pair.Image).ToList();
+            qrLeftItems = left.Select(pair => pair.Item).ToList();
+            qrRightSponsors = right.Select(pair => pair.Image).ToList();
+            qrRightItems = right.Select(pair => pair.Item).ToList();
             qrSponsorIndex = 0;
 
             foreach (Image image in qrLeftSponsors.Concat(qrRightSponsors).Where(SponsorImages.IsAnimated))
@@ -1038,11 +1045,30 @@ namespace SorbyGamingClient
                     qrSponsorIndex++;
                     Invalidate(SponsorSlot(false));
                     Invalidate(SponsorSlot(true));
+                    UpdateSponsorExposure();
                 };
                 sponsorRotateTimer.Start();
             }
 
             Invalidate();
+            UpdateSponsorExposure();
+        }
+
+        // Måler, hvilke sponsorer der står på QR-skærmen lige nu (eksponering
+        // på standen). Under en session, eller mens PC'en kun viser
+        // "Forbinder...", står der ingen bannere.
+        private void UpdateSponsorExposure()
+        {
+            bool shown = lockScreenReady && !inSession && !(awaitingConnection && !showQr);
+            List<int> visible = new List<int>();
+
+            if (shown)
+            {
+                if (qrLeftItems.Count > 0) visible.Add(qrLeftItems[qrSponsorIndex % qrLeftItems.Count].Id);
+                if (qrRightItems.Count > 0) visible.Add(qrRightItems[qrSponsorIndex % qrRightItems.Count].Id);
+            }
+
+            ActivityLog.SetVisibleSponsors("sponsor-qr", cachedEvent?.Id, visible);
         }
 
         private void StartSponsorOverlay()
@@ -1055,7 +1081,7 @@ namespace SorbyGamingClient
                 return;
             }
 
-            SponsorBannerOverlay overlay = new SponsorBannerOverlay(setup, () => gameGuard.MenuVisible);
+            SponsorBannerOverlay overlay = new SponsorBannerOverlay(setup, cachedEvent?.Id, () => gameGuard.MenuVisible);
 
             if (!overlay.HasSponsors)
             {
@@ -1407,6 +1433,7 @@ namespace SorbyGamingClient
             inSession = true;
             remainingSeconds = durationSeconds;
             ActivityLog.End("qr");
+            ActivityLog.SetVisibleSponsors("sponsor-qr", cachedEvent?.Id, Array.Empty<int>());
 
             Hide();
 

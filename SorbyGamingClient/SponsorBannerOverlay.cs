@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -27,6 +28,8 @@ namespace SorbyGamingClient
         private static readonly TimeSpan FirstShowAfter = TimeSpan.FromMinutes(1);
 
         private readonly List<Image> images;
+        private readonly List<SponsorItem> items;
+        private readonly int? eventId;
         private readonly bool rightSide;
         private readonly TimeSpan every;
         private readonly double showSeconds;
@@ -42,9 +45,12 @@ namespace SorbyGamingClient
         private double shownAt = -1;
         private bool frameDirty;
 
-        public SponsorBannerOverlay(SponsorSetup setup, Func<bool> isBlocked)
+        public SponsorBannerOverlay(SponsorSetup setup, int? eventId, Func<bool> isBlocked)
         {
-            images = SponsorImages.LoadAll(setup.Game);
+            List<(SponsorItem Item, Image Image)> loaded = SponsorImages.LoadWithItems(setup.Game);
+            images = loaded.Select(pair => pair.Image).ToList();
+            items = loaded.Select(pair => pair.Item).ToList();
+            this.eventId = eventId;
             rightSide = setup.GameSide != "left";
             every = TimeSpan.FromMinutes(Math.Clamp(setup.GameEveryMinutes, 1, 120));
             showSeconds = Math.Clamp(setup.GameShowSeconds, 5, 120);
@@ -153,12 +159,19 @@ namespace SorbyGamingClient
 
             shownAt = clock.Elapsed.TotalSeconds;
             timer.Interval = 33;
+            // Eksponering for en spiller: måles fra banneret glider ind, til det er væk.
+            ActivityLog.BeginSponsor("sponsor-game", eventId, items[index].Id);
             SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
             Render(0, showSeconds + SlideSeconds * 2);
         }
 
         private void End()
         {
+            if (index >= 0 && index < items.Count)
+            {
+                ActivityLog.End(ActivityLog.SponsorKey("sponsor-game", items[index].Id));
+            }
+
             if (current != null && SponsorImages.IsAnimated(current))
             {
                 ImageAnimator.StopAnimate(current, frameChanged);
@@ -223,6 +236,11 @@ namespace SorbyGamingClient
         {
             if (disposing)
             {
+                if (shownAt >= 0 && index >= 0 && index < items.Count)
+                {
+                    ActivityLog.End(ActivityLog.SponsorKey("sponsor-game", items[index].Id));
+                }
+
                 timer.Stop();
                 timer.Dispose();
                 SponsorImages.DisposeAll(images, frameChanged);
