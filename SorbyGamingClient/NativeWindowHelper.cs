@@ -12,6 +12,16 @@ namespace SorbyGamingClient
         public static extern IntPtr GetForegroundWindow();
 
         [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+        // Lægger vinduet øverst uden at tage fokus fra det aktive program.
+        public static void SetTopMostNoActivate(IntPtr handle)
+        {
+            const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
+            SetWindowPos(handle, new IntPtr(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+
+        [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         [DllImport("user32.dll")]

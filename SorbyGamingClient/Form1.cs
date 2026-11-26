@@ -886,8 +886,8 @@ namespace SorbyGamingClient
             DrawQrExtras(e.Graphics, qrRect);
         }
 
-        // Logo over QR-koden og tekst under, i samme mål som web-panelets
-        // forhåndsvisning (brøkdele af QR-kodens bredde).
+        // Logo over QR-koden, i samme mål som web-panelets forhåndsvisning
+        // (brøkdele af QR-kodens bredde).
         private void DrawQrExtras(Graphics graphics, Rectangle qrRect)
         {
             int qr = qrRect.Width;
@@ -909,37 +909,6 @@ namespace SorbyGamingClient
                 graphics.DrawImage(logoImage, logoRect);
                 graphics.InterpolationMode = oldMode;
             }
-
-            string? text = cachedEvent?.QrText?.Trim();
-
-            if (string.IsNullOrEmpty(text))
-            {
-                return;
-            }
-
-            float fontPixels = Math.Max(10f, qr * 0.11f);
-
-            using Font baseFont = Theme.Font(10, bold: true);
-            using Font font = new Font(baseFont.FontFamily, fontPixels, FontStyle.Bold, GraphicsUnit.Pixel);
-            Size textSize = TextRenderer.MeasureText(graphics, text, font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-            int padX = (int)Math.Round(fontPixels * 0.9f);
-            int padY = (int)Math.Round(fontPixels * 0.32f);
-            int pillHeight = textSize.Height + padY * 2;
-            Rectangle pill = new Rectangle(
-                qrRect.X + qr / 2 - (textSize.Width + padX * 2) / 2,
-                Math.Min(ClientSize.Height - pillHeight, qrRect.Bottom + gap),
-                textSize.Width + padX * 2,
-                pillHeight);
-
-            Theme.Smooth(graphics);
-            using (System.Drawing.Drawing2D.GraphicsPath path = Theme.Round(pill, pill.Height / 2f))
-            using (SolidBrush background = new SolidBrush(Color.FromArgb(158, 0, 0, 0)))
-            {
-                graphics.FillPath(background, path);
-            }
-
-            TextRenderer.DrawText(graphics, text, font, pill, Color.White,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
         }
 
         private void DrawConnectingLabel(Graphics graphics)

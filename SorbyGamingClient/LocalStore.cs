@@ -293,9 +293,8 @@ namespace SorbyGamingClient
         public string? BackgroundFit { get; set; }
 
         // Nyere felter. Ældre servere sender dem ikke; så er der ingen spil,
-        // intet logo og ingen tekst.
+        // intet logo.
         public List<EventGame> Games { get; set; } = new List<EventGame>();
-        public string? QrText { get; set; }
         public string? LogoUrl { get; set; }
     }
 

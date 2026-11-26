@@ -15,6 +15,10 @@ namespace SorbyGamingClient
         private readonly TextLabel titleLabel;
         private readonly TextLabel subtitleLabel;
         private readonly TextLabel eyebrowLabel;
+        private readonly string menuTitle;
+        private readonly System.Windows.Forms.Timer dotsTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        private string? loadingName;
+        private int dots;
 
         public event Action<PlayableGame>? GameChosen;
 
@@ -33,7 +37,8 @@ namespace SorbyGamingClient
             KeyPreview = true;
 
             eyebrowLabel = new TextLabel("SØRBY ESPORT", 10, true, Theme.Accent);
-            titleLabel = new TextLabel(games.Count == 1 ? "Tilbage til spillet" : "Vælg et spil", 26, true);
+            menuTitle = games.Count == 1 ? "Tilbage til spillet" : "Vælg et spil";
+            titleLabel = new TextLabel(menuTitle, 26, true);
             subtitleLabel = new TextLabel("Under sessionen kan du kun bruge eventets spil.", 12, color: Theme.Muted);
             banner = new Banner();
 
@@ -46,6 +51,50 @@ namespace SorbyGamingClient
                 tiles.Add(tile);
                 Controls.Add(tile);
             }
+
+            dotsTimer.Tick += (sender, e) =>
+            {
+                dots = (dots + 1) % 4;
+                titleLabel.Text = $"Starter {loadingName}" + new string('.', dots);
+            };
+        }
+
+        public bool IsLoading => loadingName != null;
+
+        // "Starter spillet ..." - dækker skærmen, mens spillet åbner, så
+        // spilleren ikke kan klikke rundt på skrivebordet imens.
+        public void ShowLoading(string gameName)
+        {
+            loadingName = gameName;
+            dots = 3;
+            titleLabel.Text = $"Starter {gameName}...";
+            subtitleLabel.Text = "Spillet åbner af sig selv om et øjeblik. Vent venligst.";
+            banner.Visible = false;
+            tiles.ForEach(tile => tile.Visible = false);
+            dotsTimer.Start();
+            LayoutContent();
+        }
+
+        // Tilbage til spil-valget.
+        public void ShowChoices()
+        {
+            loadingName = null;
+            dotsTimer.Stop();
+            titleLabel.Text = menuTitle;
+            subtitleLabel.Text = "Under sessionen kan du kun bruge eventets spil.";
+            tiles.ForEach(tile => tile.Visible = true);
+            LayoutContent();
+        }
+
+        // Ligger forrest uden at tage fokus fra spillet, der er ved at starte.
+        public void KeepOnTop()
+        {
+            if (!Visible)
+            {
+                return;
+            }
+
+            NativeWindowHelper.SetTopMostNoActivate(Handle);
         }
 
         public static string PlatformName(string platform) => platform switch
@@ -79,6 +128,7 @@ namespace SorbyGamingClient
 
         public void ShowError(string message)
         {
+            ShowChoices();
             banner.Show(message);
             LayoutContent();
         }
@@ -88,7 +138,8 @@ namespace SorbyGamingClient
             int width = Math.Min(S(560), ClientSize.Width - S(48));
             int tileHeight = S(76);
             int gap = S(12);
-            int contentHeight = S(150) + (banner.Visible ? S(58) : 0) + tiles.Count * (tileHeight + gap);
+            int visibleTiles = loadingName == null ? tiles.Count : 0;
+            int contentHeight = S(150) + (banner.Visible ? S(58) : 0) + visibleTiles * (tileHeight + gap);
             int left = (ClientSize.Width - width) / 2;
             int top = Math.Max(S(40), (ClientSize.Height - contentHeight) / 2);
 
@@ -133,6 +184,7 @@ namespace SorbyGamingClient
         public void ForceClose()
         {
             allowClose = true;
+            dotsTimer.Stop();
             Close();
         }
 
@@ -145,6 +197,16 @@ namespace SorbyGamingClient
             }
 
             base.OnFormClosing(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                dotsTimer.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 }

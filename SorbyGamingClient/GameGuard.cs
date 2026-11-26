@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -23,6 +24,14 @@ namespace SorbyGamingClient
         private static readonly TimeSpan LaunchGrace = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan SwitchGrace = TimeSpan.FromSeconds(4);
 
+        // "Starter spillet"-skærmen fjernes, når spillets vindue har været
+        // fremme et øjeblik. Et stort vindue (selve spillet) venter kort; et
+        // lille vindue (fx en splash-skærm eller anti-cheat) venter længere.
+        private static readonly TimeSpan LargeWindowSettle = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan SmallWindowSettle = TimeSpan.FromSeconds(20);
+        // Starter spillet slet ikke, fjernes skærmen alligevel efter denne tid.
+        private static readonly TimeSpan StartingTimeout = TimeSpan.FromSeconds(120);
+
         // Hjælpeprogrammer, som spil ofte åbner (launchere, anti-cheat, crash-rapporter).
         private static readonly HashSet<string> HelperProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -40,6 +49,9 @@ namespace SorbyGamingClient
         private GameMenuForm? menu;
         private DateTime graceUntil;
         private bool running;
+        private PlayableGame? starting;
+        private DateTime startingUntil;
+        private DateTime windowSeenSince = DateTime.MinValue;
 
         // Sættes, mens admin-menuen er åben, så vagten ikke dækker den.
         public bool Paused { get; set; }
@@ -94,6 +106,7 @@ namespace SorbyGamingClient
         {
             bool wasRunning = running;
             running = false;
+            starting = null;
             timer.Stop();
 
             if (menu != null)
@@ -118,6 +131,12 @@ namespace SorbyGamingClient
         {
             if (!running || Paused)
             {
+                return;
+            }
+
+            if (starting != null)
+            {
+                CheckStarting();
                 return;
             }
 
@@ -187,13 +206,128 @@ namespace SorbyGamingClient
 
         private void ShowMenu()
         {
+            EnsureMenu().ShowChoices();
+            menu!.Cover();
+        }
+
+        private GameMenuForm EnsureMenu()
+        {
             if (menu == null)
             {
                 menu = new GameMenuForm(games);
                 menu.GameChosen += Launch;
             }
 
-            menu.Cover();
+            return menu;
+        }
+
+        // Mens spillet starter, ligger "Starter spillet"-skærmen over alt.
+        // Den tager ikke fokus fra spillet, men dækker skærmen, så der ikke
+        // kan klikkes rundt. Når spillets vindue er klar, fjernes den.
+        private void CheckStarting()
+        {
+            PlayableGame game = starting!;
+            (IntPtr window, bool large) = FindGameWindow(game.Installed.GameFolders);
+            DateTime now = DateTime.Now;
+
+            if (window == IntPtr.Zero)
+            {
+                windowSeenSince = DateTime.MinValue;
+            }
+            else
+            {
+                if (windowSeenSince == DateTime.MinValue)
+                {
+                    windowSeenSince = now;
+                }
+
+                if (now - windowSeenSince >= (large ? LargeWindowSettle : SmallWindowSettle))
+                {
+                    Console.WriteLine($"{game.Name} er startet - fjerner startskærmen.");
+                    FinishStarting(window);
+                    return;
+                }
+            }
+
+            if (now > startingUntil)
+            {
+                Console.WriteLine($"{game.Name} viste ikke et vindue i tide - fjerner startskærmen.");
+                FinishStarting(IntPtr.Zero);
+                return;
+            }
+
+            menu?.KeepOnTop();
+        }
+
+        private void FinishStarting(IntPtr window)
+        {
+            starting = null;
+            windowSeenSince = DateTime.MinValue;
+            graceUntil = DateTime.Now + SwitchGrace;
+            menu?.ShowChoices();
+            menu?.Hide();
+
+            if (window != IntPtr.Zero)
+            {
+                if (IsIconic(window))
+                {
+                    ShowWindow(window, SW_RESTORE);
+                }
+
+                NativeWindowHelper.ForceForeground(window);
+            }
+        }
+
+        // Spillets synlige hovedvindue, og om det fylder det meste af skærmen.
+        private static (IntPtr Window, bool Large) FindGameWindow(List<string> folders)
+        {
+            List<string> prefixes = folders.Select(EnsureTrailingSlash).ToList();
+            IntPtr best = IntPtr.Zero;
+            bool bestLarge = false;
+
+            foreach (Process process in Process.GetProcesses())
+            {
+                try
+                {
+                    if (process.Id == Environment.ProcessId)
+                    {
+                        continue;
+                    }
+
+                    string? path = ImagePath((uint)process.Id);
+
+                    if (path == null || !prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    IntPtr window = process.MainWindowHandle;
+
+                    if (window == IntPtr.Zero || !IsWindowVisible(window) || !GetWindowRect(window, out RECT rect))
+                    {
+                        continue;
+                    }
+
+                    Rectangle screen = Screen.FromHandle(window).Bounds;
+                    bool large = rect.Right - rect.Left >= screen.Width * 0.6 && rect.Bottom - rect.Top >= screen.Height * 0.6;
+
+                    if (best == IntPtr.Zero || (large && !bestLarge))
+                    {
+                        best = window;
+                        bestLarge = large;
+                    }
+                }
+                catch
+                {
+                    // Processen er lukket imens - spring den over.
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+
+            return (best, bestLarge);
         }
 
         // ---------------------------------------------------------
@@ -202,7 +336,6 @@ namespace SorbyGamingClient
 
         private void Launch(PlayableGame game)
         {
-            menu?.Hide();
             graceUntil = DateTime.Now + LaunchGrace;
 
             try
@@ -212,10 +345,19 @@ namespace SorbyGamingClient
                 if (existing != null)
                 {
                     Console.WriteLine($"{game.Name} kører allerede - hentes frem.");
+                    menu?.Hide();
                     graceUntil = DateTime.Now + SwitchGrace;
                     BringToFront(existing);
                     return;
                 }
+
+                // Startskærmen kommer frem, før spillet startes, så skrivebordet
+                // aldrig er fremme imens.
+                EnsureMenu().ShowLoading(game.Name);
+                menu!.Cover();
+                starting = game;
+                startingUntil = DateTime.Now + StartingTimeout;
+                windowSeenSince = DateTime.MinValue;
 
                 Console.WriteLine($"Starter {game.Name}: {game.Installed.LaunchTarget} {game.Installed.LaunchArguments}");
                 Process.Start(game.Installed.StartInfo());
@@ -223,6 +365,7 @@ namespace SorbyGamingClient
             catch (Exception ex)
             {
                 Console.WriteLine($"Kunne ikke starte {game.Name}: {ex.Message}");
+                starting = null;
                 graceUntil = DateTime.MinValue;
                 ShowMenu();
                 menu?.ShowError($"{game.Name} kunne ikke startes.");
@@ -375,6 +518,18 @@ namespace SorbyGamingClient
 
         [DllImport("user32.dll")]
         private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
 
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
